@@ -3,39 +3,31 @@ import AppError from '../utils/appError.js';
 import { v4 as uuidv4 } from 'uuid';
 import { uploadToS3 } from '../utils/s3.js';
 import { processImage, getImageOutputConfig } from '../utils/imageProcessor.js';
+import { formatCharacterData, validateCharacterData } from '../utils/characterUtils.js';
 
-// Format character response with personality traits
+// Basic gender helper used when generating default first messages
+function getGenderInfo(gender) {
+  const g = String(gender || '').toLowerCase();
+  switch (g) {
+    case 'female':
+      return { emoji: '💜', pronouns: { subject: 'she', object: 'her', possessive: 'her' } };
+    case 'male':
+      return { emoji: '💙', pronouns: { subject: 'he', object: 'him', possessive: 'his' } };
+    case 'nonbinary':
+    case 'nb':
+    case 'other':
+      return { emoji: '💛', pronouns: { subject: 'they', object: 'them', possessive: 'their' } };
+    default:
+      return { emoji: '😊', pronouns: { subject: 'they', object: 'them', possessive: 'their' } };
+  }
+}
+
+// Format character response with personality traits and metadata
 const formatCharacterResponse = (character, userId) => {
-  const personalityTraits = {};
-  const personalityKeys = [
-    'flirtiness', 'shyness', 'kindness', 'rudeness', 'confidence',
-    'intelligence', 'empathy', 'humor', 'aggression', 'openness',
-    'extroversion', 'patience'
-  ];
-
-  personalityKeys.forEach(trait => {
-    if (character[trait] !== undefined) {
-      personalityTraits[trait] = parseFloat(character[trait]);
-    }
-  });
-
+  const formatted = formatCharacterData(character);
   return {
-    id: character.id,
-    creator_id: character.creator_id,
-    name: character.name,
-    description: character.description,
-    persona: character.persona,
-    avatar_url: character.avatar_url,
-    character_type: character.character_type,
-    visibility: character.visibility,
-    nsfw_enabled: character.nsfw_enabled,
-    tags: character.tags || [],
-    first_message: character.first_message,
-    example_conversations: character.example_conversations || [],
-    personality: personalityTraits,
-    is_owner: character.creator_id === userId,
-    created_at: character.created_at,
-    updated_at: character.updated_at
+    ...formatted,
+    is_owner: character.creator_id === userId
   };
 };
 
@@ -59,7 +51,7 @@ const checkCharacterAccess = async (characterId, userId, requireOwner = false) =
   if (!isOwner) {
     const { count } = await supabase
       .from('character_shares')
-      .select('*', { count: 'exact', head: true })
+      .select('*', { count: 'exact', head: true})
       .eq('character_id', characterId)
       .eq('user_id', userId);
     
@@ -77,21 +69,6 @@ const checkCharacterAccess = async (characterId, userId, requireOwner = false) =
   return { isOwner, character };
 };
 
-// Default personality traits
-const DEFAULT_PERSONALITY = {
-  flirtiness: 0.5,
-  shyness: 0.5,
-  kindness: 0.7,
-  rudeness: 0.3,
-  confidence: 0.6,
-  intelligence: 0.7,
-  empathy: 0.7,
-  humor: 0.5,
-  aggression: 0.2,
-  openness: 0.7,
-  extroversion: 0.6,
-  patience: 0.7
-};
 
 // Create a new character
 export const createCharacter = async (req, res, next) => {
@@ -100,61 +77,117 @@ export const createCharacter = async (req, res, next) => {
       name,
       description,
       persona,
-      character_type,
+      character_type = 'friend',
+      character_gender = 'other',
       visibility = 'private',
       nsfw_enabled = false,
       tags = [],
       first_message,
       example_conversations = [],
-      // Personality traits (0.0 to 1.0)
-      flirtiness = 0.5,
-      shyness = 0.5,
-      kindness = 0.7,
-      rudeness = 0.3,
-      confidence = 0.6,
-      intelligence = 0.7,
-      empathy = 0.7,
-      humor = 0.5,
-      aggression = 0.2,
-      openness = 0.7,
-      extroversion = 0.6,
-      patience = 0.7
+      // Extract personality traits from request body
+      // These will be whatever the user provides, or undefined if not provided
+      flirtiness,
+      shyness,
+      kindness,
+      rudeness,
+      confidence,
+      intelligence,
+      empathy,
+      humor,
+      aggression,
+      openness,
+      extroversion,
+      patience
     } = req.body;
 
-    if (!name || !description || !persona || !character_type) {
-      throw new AppError('Missing required fields', 400);
-    }
-
-    // Validate personality traits
-    const personalityTraits = {
-      flirtiness: Math.max(0, Math.min(1, parseFloat(flirtiness) || 0.5)),
-      shyness: Math.max(0, Math.min(1, parseFloat(shyness) || 0.5)),
-      kindness: Math.max(0, Math.min(1, parseFloat(kindness) || 0.7)),
-      rudeness: Math.max(0, Math.min(1, parseFloat(rudeness) || 0.3)),
-      confidence: Math.max(0, Math.min(1, parseFloat(confidence) || 0.6)),
-      intelligence: Math.max(0, Math.min(1, parseFloat(intelligence) || 0.7)),
-      empathy: Math.max(0, Math.min(1, parseFloat(empathy) || 0.7)),
-      humor: Math.max(0, Math.min(1, parseFloat(humor) || 0.5)),
-      aggression: Math.max(0, Math.min(1, parseFloat(aggression) || 0.2)),
-      openness: Math.max(0, Math.min(1, parseFloat(openness) || 0.7)),
-      extroversion: Math.max(0, Math.min(1, parseFloat(extroversion) || 0.6)),
-      patience: Math.max(0, Math.min(1, parseFloat(patience) || 0.7))
-    };
-
-    const characterData = {
-      creator_id: req.user.id,
+    // Validate character data
+    const { isValid, errors } = validateCharacterData({
       name,
       description,
       persona,
       character_type,
+      character_gender,
+      first_message,
+      tags,
+      example_conversations,
+      // Include personality traits for validation
+      flirtiness,
+      shyness,
+      kindness,
+      rudeness,
+      confidence,
+      intelligence,
+      empathy,
+      humor,
+      aggression,
+      openness,
+      extroversion,
+      patience
+    });
+    
+    if (!isValid) {
+      throw new AppError(`Validation failed: ${errors.join(', ')}`, 400);
+    }
+    
+    // Set default first message based on character type and gender if not provided
+    let initialFirstMessage = first_message;
+    if (!initialFirstMessage) {
+      const genderInfo = getGenderInfo(character_gender);
+      const defaultMessages = {
+        girlfriend: `Hey there! I'm ${name}. *smiles warmly* How's your day going? ${genderInfo.emoji || '😊'}`,
+        boyfriend: `Hey! I'm ${name}. *nods* What's up? ${genderInfo.emoji || '👋'}`,
+        friend: `Hi! I'm ${name}. *waves* Nice to meet you! ${genderInfo.emoji || '😊'}`,
+        therapist: `Hello, I'm ${name}. *sits attentively* How can I help you today? ${genderInfo.emoji || '💭'}`,
+        mentor: `Hello, I'm ${name}. *smiles warmly* What would you like to learn? ${genderInfo.emoji || '📚'}`,
+        teacher: `Hello class, I'm ${name}. *stands at the front* Let's begin. ${genderInfo.emoji || '✏️'}`,
+        celebrity: `*waves to fans* Hi everyone, I'm ${name}! ${genderInfo.emoji || '🌟'}`,
+        other: `Hi, I'm ${name}. *smiles* ${genderInfo.emoji || '👋'}`
+      };
+      initialFirstMessage = defaultMessages[character_type] || `Hello, I'm ${name}.`;
+    }
+
+    // Process personality traits - only include those that are provided
+    const personalityTraits = {};
+    const traits = [
+      'flirtiness', 'shyness', 'kindness', 'rudeness', 'confidence',
+      'intelligence', 'empathy', 'humor', 'aggression', 'openness',
+      'extroversion', 'patience'
+    ];
+    
+    traits.forEach(trait => {
+      if (req.body[trait] !== undefined) {
+        const value = parseFloat(req.body[trait]);
+        if (!isNaN(value)) {
+          // Ensure value is between 0 and 1
+          personalityTraits[trait] = Math.max(0, Math.min(1, value));
+        }
+      }
+    });
+
+    // Start with basic character data
+    const characterData = {
+      id: uuidv4(),
+      creator_id: req.user.id,
+      name,
+      description,
+      persona,
+      avatar_url: '',
+      character_type,
+      character_gender,
       visibility,
       nsfw_enabled,
       tags: Array.isArray(tags) ? tags : [],
-      first_message: first_message || null,
+      first_message: initialFirstMessage || null,
       example_conversations: Array.isArray(example_conversations) ? example_conversations : [],
-      ...personalityTraits,
       updated_at: new Date()
     };
+    
+    // Add personality traits if they were provided
+    Object.entries(personalityTraits).forEach(([key, value]) => {
+      if (value !== undefined) {
+        characterData[key] = value;
+      }
+    });
 
     const { data: character, error } = await supabase
       .from('characters')
@@ -206,37 +239,79 @@ export const updateCharacter = async (req, res, next) => {
     const { id } = req.params;
     await checkCharacterAccess(id, req.user.id, true); // Only owner can update
 
-    // Extract and validate personality traits if provided
+    // Process personality traits - only include those that are provided
     const personalityTraits = {};
-    const personalityKeys = [
+    const traits = [
       'flirtiness', 'shyness', 'kindness', 'rudeness', 'confidence',
       'intelligence', 'empathy', 'humor', 'aggression', 'openness',
       'extroversion', 'patience'
     ];
-
-    personalityKeys.forEach(trait => {
+    
+    traits.forEach(trait => {
       if (req.body[trait] !== undefined) {
-        personalityTraits[trait] = Math.max(0, Math.min(1, parseFloat(req.body[trait]) || DEFAULT_PERSONALITY[trait]));
+        const value = parseFloat(req.body[trait]);
+        if (!isNaN(value)) {
+          // Ensure value is between 0 and 1
+          personalityTraits[trait] = Math.max(0, Math.min(1, value));
+        }
       }
     });
 
-    // Prepare updates
+    // Prepare updates with personality traits
     const updates = { 
       ...req.body,
       ...personalityTraits,
       updated_at: new Date() 
     };
     
-    // Don't allow updating creator_id and handle special fields
+    // Don't allow updating creator_id
     delete updates.creator_id;
     
-    // Handle tags and example_conversations if provided
-    if (updates.tags && !Array.isArray(updates.tags)) {
-      updates.tags = [];
+    // If we're updating character data, validate it
+    const needsValidation = [
+      'name', 'description', 'persona', 'character_type', 
+      'character_gender', 'first_message', 'tags', 'example_conversations'
+    ].some(field => field in updates);
+    
+    if (needsValidation) {
+      // Get current character data to fill in missing fields
+      const { data: currentCharacter } = await supabase
+        .from('characters')
+        .select('*')
+        .eq('id', id)
+        .single();
+      
+      if (!currentCharacter) {
+        throw new AppError('Character not found', 404);
+      }
+      
+      // Create a complete character object with updates applied
+      const updatedCharacter = {
+        ...currentCharacter,
+        ...updates,
+        // Ensure these are properly formatted
+        tags: Array.isArray(updates.tags) ? updates.tags : currentCharacter.tags || [],
+        example_conversations: Array.isArray(updates.example_conversations) 
+          ? updates.example_conversations 
+          : currentCharacter.example_conversations || []
+      };
+      
+      // Validate the updated character data
+      const { isValid, errors } = validateCharacterData(updatedCharacter);
+      if (!isValid) {
+        throw new AppError(`Validation failed: ${errors.join(', ')}`, 400);
+      }
     }
     
-    if (updates.example_conversations && !Array.isArray(updates.example_conversations)) {
-      updates.example_conversations = [];
+    // Ensure tags and example_conversations are arrays
+    if (updates.tags !== undefined) {
+      updates.tags = Array.isArray(updates.tags) ? updates.tags : [];
+    }
+    
+    if (updates.example_conversations !== undefined) {
+      updates.example_conversations = Array.isArray(updates.example_conversations) 
+        ? updates.example_conversations 
+        : [];
     }
 
     const { data: character, error } = await supabase
@@ -284,13 +359,15 @@ export const deleteCharacter = async (req, res, next) => {
 // List characters
 export const listCharacters = async (req, res, next) => {
   try {
-    const { type, search, page = 1, limit = 10 } = req.query;
+    const { type, search } = req.query;
+    const page = parseInt(req.query.page || '1', 10);
+    const limit = parseInt(req.query.limit || '10', 10);
     const offset = (page - 1) * limit;
 
     let query = supabase
       .from('characters')
       .select('*', { count: 'exact' })
-      .or(`creator_id.eq.${req.user.id},visibility.eq.public`)
+      .eq('creator_id', req.user.id)
       .order('created_at', { ascending: false });
 
     // Apply filters
@@ -312,9 +389,12 @@ export const listCharacters = async (req, res, next) => {
       data: {
         characters: characters.map(char => formatCharacterResponse(char, req.user.id)),
         pagination: {
-          total: count,
-          page: parseInt(page),
-          total_pages: Math.ceil((count || 0) / limit)
+          total: count || 0,
+          page,
+          limit,
+          offset,
+          total_pages: Math.ceil((count || 0) / limit),
+          hasMore: offset + (characters?.length || 0) < (count || 0)
         }
       }
     });

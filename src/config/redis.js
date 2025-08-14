@@ -122,11 +122,13 @@ class RedisClient {
   async increment(key, ttl = 3600) {
     if (!this.isConnected) return null;
     try {
-      const result = await this.client.multi()
-        .incr(key)
-        .expire(key, ttl)
-        .exec();
-      return result[0];
+      // Increment the counter
+      const current = await this.client.incr(key);
+      // Only set expiry when the key is first created (value becomes 1)
+      if (current === 1) {
+        await this.client.expire(key, ttl);
+      }
+      return current;
     } catch (error) {
       console.error('Redis increment error:', error);
       return null;

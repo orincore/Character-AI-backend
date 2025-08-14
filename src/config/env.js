@@ -34,7 +34,11 @@ const env = {
   AWS_REGION: process.env.AWS_REGION || 'ap-south-1',
   AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID,
   AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY,
-  S3_BUCKET: process.env.S3_BUCKET
+  // Prefer S3_BUCKET; keep legacy names for compatibility
+  S3_BUCKET: process.env.S3_BUCKET,
+  S3_BUCKET_NAME: process.env.S3_BUCKET || process.env.AWS_S3_BUCKET,
+  // CloudFront/CF domain for public asset URLs
+  S3_PUBLIC_BASE_URL: process.env.S3_PUBLIC_BASE_URL
 };
 
 // Validate required environment variables

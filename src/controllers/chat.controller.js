@@ -106,19 +106,51 @@ export const sendMessage = async (req, res, next) => {
 export const getSessionMessages = async (req, res, next) => {
   try {
     const { sessionId } = req.params;
-    const { limit = 50 } = req.query;
-    const userId = req.user.id;
+    const { limit = 50, offset = 0 } = req.query;
+    const userId = req.user?.id;
 
-    const messages = await chatService.getSessionMessages(sessionId, userId, parseInt(limit));
+    console.log('Fetching messages for session:', { 
+      sessionId, 
+      userId,
+      limit,
+      offset,
+      timestamp: new Date().toISOString()
+    });
+
+    if (!sessionId) {
+      throw new AppError('Session ID is required', 400);
+    }
+
+    if (!userId) {
+      throw new AppError('User not authenticated', 401);
+    }
+
+    const { messages, pagination } = await chatService.getSessionMessages(
+      sessionId, 
+      userId, 
+      { 
+        limit: parseInt(limit, 10) || 50,
+        offset: parseInt(offset, 10) || 0
+      }
+    );
+    
+    console.log(`Found ${messages.length} messages for session ${sessionId}`);
     
     res.status(200).json({
       status: 'success',
-      results: messages.length,
       data: {
-        messages
+        messages,
+        pagination
       }
     });
   } catch (error) {
+    console.error('Error in getSessionMessages:', {
+      error: error.message,
+      stack: error.stack,
+      params: req.params,
+      query: req.query,
+      userId: req.user?.id
+    });
     next(error);
   }
 };

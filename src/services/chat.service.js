@@ -5,26 +5,34 @@ import { prompts, getPersonalityDescription } from '../config/prompts.js';
 import { enqueueRequest } from '../utils/requestQueue.js';
 import { RateLimitError } from '../middleware/errorHandler.js';
 
+import { formatCharacterData } from '../utils/characterUtils.js';
+
 /**
  * Builds the system prompt for the AI based on character settings
  */
 function buildSystemPrompt(character) {
-  const { name, description, personality_traits = {}, nsfw_enabled } = character;
+  // Format character data to ensure all fields have proper defaults
+  const formattedChar = formatCharacterData(character);
   
   // Get personality description from centralized prompts
-  const personalityDesc = getPersonalityDescription(personality_traits);
+  const personalityDesc = getPersonalityDescription(formattedChar);
   
   // Get appropriate content guidelines based on NSFW setting
-  const contentGuidelines = nsfw_enabled 
+  const contentGuidelines = formattedChar.nsfw_enabled 
     ? prompts.contentGuidelines.nsfw 
     : prompts.contentGuidelines.sfw;
   
+  // Get the combined description (already handled in formatCharacterData)
+  const fullDescription = formattedChar.full_description;
+  
   // Build the complete system prompt using the template
   return prompts.character.base(
-    name,
-    description,
+    formattedChar.name,
+    fullDescription,
     personalityDesc,
-    contentGuidelines
+    contentGuidelines,
+    formattedChar.character_type,
+    formattedChar.character_gender
   );
 }
 
@@ -78,6 +86,9 @@ export async function createSession(userId, characterId, title = 'New Chat') {
 /**
  * Gets a chat session by ID with character details
  */
+/**
+ * Gets a chat session by ID with complete character details
+ */
 export async function getSession(sessionId, userId) {
   const { data: session, error } = await supabase
     .from('chat_sessions')
@@ -92,6 +103,11 @@ export async function getSession(sessionId, userId) {
   if (error) {
     console.error('Error fetching session:', error);
     throw new Error('Session not found or access denied');
+  }
+
+  // Format character data using our utility
+  if (session.characters) {
+    session.characters = formatCharacterData(session.characters);
   }
 
   return session;
@@ -223,34 +239,100 @@ export async function sendMessage(sessionId, userId, message) {
 }
 
 /**
- * Gets chat history for a session
+ * Formats raw database messages to the expected frontend format
  */
-export async function getSessionMessages(sessionId, userId, limit = 50) {
-  // Verify user has access to this session
-  const { count } = await supabase
-    .from('chat_sessions')
-    .select('*', { count: 'exact', head: true })
-    .eq('id', sessionId)
-    .eq('user_id', userId);
+function formatMessages(messages) {
+  if (!Array.isArray(messages)) return [];
+  
+  return messages.map(msg => ({
+    id: msg.id,
+    session_id: msg.session_id,
+    content: msg.content,
+    sender_type: msg.role === 'assistant' ? 'ai' : 'user',
+    created_at: msg.created_at,
+    is_ai_typing: false,
+    metadata: msg.metadata || {}
+  }));
+}
 
-  if (count === 0) {
-    throw new Error('Session not found or access denied');
+/**
+ * Gets chat history for a session using only session_id
+ * @param {string} sessionId - The session ID
+ * @param {string} userId - The user ID (for authorization)
+ * @param {Object} options - Pagination options
+ * @param {number} [options.limit=50] - Number of messages to return
+ * @param {number} [options.offset=0] - Number of messages to skip
+ * @returns {Promise<{messages: Array, total: number}>} - Messages and total count
+ */
+export async function getSessionMessages(sessionId, userId, { limit = 50, offset = 0 } = {}) {
+  console.log('Service: Getting messages for session', { 
+    sessionId,
+    limit,
+    offset
+  });
+
+  try {
+    console.log('Fetching messages with Supabase query...');
+    console.log('Supabase URL:', process.env.SUPABASE_URL);
+    
+    // 1. First, verify the session_id is a valid UUID
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-5][0-9a-f]{3}-[089ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(sessionId)) {
+      throw new Error('Invalid session_id format');
+    }
+    
+    // 1. First, verify the table is accessible
+    console.log('Checking if chat_messages table is accessible...');
+    
+    // 2. Get the count of messages for this session
+    const { count, error: countError } = await supabase
+      .from('chat_messages')
+      .select('*', { count: 'exact', head: true })
+      .eq('session_id', sessionId);
+      
+    if (countError) {
+      console.error('Error getting message count:', countError);
+      throw new Error('Failed to get message count');
+    }
+    
+    console.log(`Found ${count} total messages for session ${sessionId}`);
+    
+    // 3. Get the actual messages with pagination
+    const { data: messages, error: queryError, count: total } = await supabase
+      .from('chat_messages')
+      .select('*', { count: 'exact' })
+      .eq('session_id', sessionId)
+      .order('created_at', { ascending: false }) // Get newest first for chat
+      .range(offset, offset + limit - 1);
+
+    if (queryError) {
+      console.error('Error fetching messages:', queryError);
+      throw new Error('Failed to fetch messages');
+    }
+    
+    console.log(`Retrieved ${messages.length} messages (${offset} - ${offset + messages.length - 1} of ${total})`);
+    
+    // 4. Format the messages for the frontend
+    const formattedMessages = formatMessages(messages);
+    
+    // Return both messages and pagination info
+    return {
+      messages: formattedMessages,
+      pagination: {
+        total,
+        limit: parseInt(limit, 10) || 50,
+        offset: parseInt(offset, 10) || 0,
+        hasMore: offset + formattedMessages.length < total
+      }
+    };
+  } catch (error) {
+    console.error('Error in getSessionMessages service:', {
+      error: error.message,
+      stack: error.stack,
+      sessionId,
+      userId
+    });
+    throw error; // Re-throw to be handled by the controller
   }
-
-  // Get messages
-  const { data: messages, error } = await supabase
-    .from('chat_messages')
-    .select('*')
-    .eq('session_id', sessionId)
-    .order('created_at', { ascending: true })
-    .limit(limit);
-
-  if (error) {
-    console.error('Error fetching messages:', error);
-    throw new Error('Failed to fetch messages');
-  }
-
-  return messages;
 }
 
 /**

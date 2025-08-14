@@ -1,11 +1,15 @@
 import express from 'express';
 import * as chatController from '../controllers/chat.controller.js';
 import { protect } from '../middleware/auth.middleware.js';
+import { chatRateLimiter, standardRateLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
 
 // Protect all routes after this middleware
 router.use(protect);
+
+// Apply chat-specific rate limiter to chat endpoints
+router.use(chatRateLimiter);
 
 // Session routes
 router.route('/sessions')

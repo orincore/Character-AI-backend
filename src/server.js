@@ -25,10 +25,45 @@ const PORT = env.PORT || 5000;
 
 // Security middleware
 app.use(helmet());
-app.use(cors({
-  origin: env.CORS_ORIGIN.split(',').map(origin => origin.trim()),
-  credentials: true
-}));
+
+// Enhanced CORS for mobile (Expo) and web
+const isProd = env.NODE_ENV === 'production';
+const devAllowedOrigins = [
+  'http://localhost:19006',
+  'http://127.0.0.1:19006',
+  'http://localhost:8081',
+  'http://127.0.0.1:8081',
+  'exp://',
+  'http://localhost:3000',
+];
+
+const configuredOrigins = env.CORS_ORIGIN
+  ? env.CORS_ORIGIN.split(',').map(o => o.trim()).filter(Boolean)
+  : [];
+
+const corsOptions = {
+  origin: isProd
+    ? configuredOrigins
+    : function (origin, callback) {
+        // In dev: allow all localhost and Expo origins
+        if (!origin) return callback(null, true);
+        if (devAllowedOrigins.some(prefix => origin.startsWith(prefix))) {
+          return callback(null, true);
+        }
+        // Also allow anything specified in CORS_ORIGIN
+        if (configuredOrigins.includes(origin)) {
+          return callback(null, true);
+        }
+        // Fallback: allow in dev
+        return callback(null, true);
+      },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Device-ID'],
+  exposedHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset', 'Retry-After']
+};
+
+app.use(cors(corsOptions));
 
 // Rate limiting with Redis - More permissive settings for high concurrency
 const limiter = rateLimit({
@@ -53,14 +88,11 @@ const limiter = rateLimit({
   }
 });
 
-// Apply rate limiting to all routes
-app.use(limiter);
-
-// More strict rate limiting for auth routes
+// Apply rate limiting only to auth routes (most restrictive)
 app.use('/api/v1/auth', strictRateLimiter);
 
-// Standard rate limiting for API routes with higher limits
-app.use('/api/v1', standardRateLimiter);
+// Note: Chat routes have their own chatRateLimiter applied in chat.routes.js
+// Other API routes will use the route-specific rate limiters
 
 // Increase the server timeout to handle long-running requests
 app.timeout = 30000; // 30 seconds

@@ -11,40 +11,49 @@ import { RateLimitError } from './errorHandler.js';
  */
 const apiRateLimiter = (options = {}) => {
   const { 
-    points = 300, // Increased from 100 to 300 requests
-    duration = 60, // Per minute
+    points = 300, // default per-minute points
+    duration = 60, // window in seconds
     keyPrefix = 'rl',
     skip = () => false // Optional skip function
   } = options;
 
   return async (req, res, next) => {
     try {
-      // Skip rate limiting for certain paths
+      // TEMPORARY: Skip rate limiting in development
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`[DEV] Rate limiting disabled for ${req.method} ${req.path}`);
+        return next();
+      }
+
+      // Allow callers to skip (e.g., health, websockets, streams)
       if (skip(req)) {
         return next();
       }
-      
-      // Use IP address or user ID if authenticated
-      const key = req.user?.id || req.ip;
-      const rateLimitKey = `${keyPrefix}:${key}`;
+
+      // Prefer device ID header for mobile, then authenticated user ID, then IP
+      const deviceId = req.headers['x-device-id'];
+      const subject = deviceId || (req.user?.id ? `user:${req.user.id}` : `ip:${req.ip}`);
+      // Include path to isolate endpoints and reduce cross-endpoint contention
+      const pathKey = req.path || req.originalUrl || '';
+      const rateLimitKey = `${keyPrefix}:${subject}:${pathKey}`;
 
       const result = await rateLimiter.consume(rateLimitKey, points, duration);
-      
-      // Add rate limit headers to response
+
+      // Add rate limit headers to response for client-side handling
       res.set({
-        'X-RateLimit-Limit': points,
-        'X-RateLimit-Remaining': result.remainingPoints,
+        'X-RateLimit-Limit': String(points),
+        'X-RateLimit-Remaining': String(result.remainingPoints),
         'X-RateLimit-Reset': new Date(Date.now() + result.msBeforeNext).toISOString()
       });
-      
-      next();
+
+      return next();
     } catch (error) {
       console.error('Rate limit exceeded:', error);
-      
-      // Add retry-after header
-      res.set('Retry-After', Math.ceil(duration / 1000));
-      
-      next(new RateLimitError());
+
+      // Correct Retry-After to seconds (duration is already seconds)
+      res.set('Retry-After', String(Math.ceil(duration)));
+
+      return next(new RateLimitError());
     }
   };
 };
@@ -62,13 +71,33 @@ const strictRateLimiter = apiRateLimiter({
  * Standard rate limiter for API endpoints
  */
 const standardRateLimiter = apiRateLimiter({
-  points: 100,      // 100 requests
+  points: 500,      // 500 requests (increased for mobile apps)
   duration: 60,     // Per minute
   keyPrefix: 'api_rl',
+});
+
+/**
+ * Chat-specific rate limiter (more permissive for real-time chat)
+ */
+const chatRateLimiter = apiRateLimiter({
+  points: 1000,     // 1000 requests
+  duration: 60,     // Per minute
+  keyPrefix: 'chat_rl',
+});
+
+/**
+ * Burst-friendly rate limiter for concurrent requests
+ */
+const burstRateLimiter = apiRateLimiter({
+  points: 50,       // 50 requests
+  duration: 10,     // Per 10 seconds (allows bursts)
+  keyPrefix: 'burst_rl',
 });
 
 export { 
   apiRateLimiter, 
   strictRateLimiter, 
-  standardRateLimiter 
+  standardRateLimiter,
+  chatRateLimiter,
+  burstRateLimiter
 };

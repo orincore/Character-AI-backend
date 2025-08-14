@@ -4,11 +4,42 @@ import bcrypt from 'bcryptjs';
 import { userDB } from '../config/supabaseClient.js';
 import AppError from '../utils/appError.js';
 import env from '../config/env.js';
+import { uploadToS3, deleteFromS3, getKeyFromUrl } from '../config/s3.js';
+import path from 'path';
 
 const signToken = (id) => {
   return jwt.sign({ id }, env.JWT_SECRET, {
     expiresIn: env.JWT_EXPIRES_IN,
   });
+};
+
+// Delete current user's avatar: remove from S3 and clear avatar_url
+export const deleteAvatar = async (req, res, next) => {
+  try {
+    const user = await userDB.getUserById(req.user.id);
+    if (!user) return next(new AppError('User not found', 404));
+
+    const prevUrl = user.avatar_url;
+    if (!prevUrl) {
+      return res.status(200).json({ status: 'success', data: { avatar_url: null, deleted: false } });
+    }
+
+    // Try to delete object from S3
+    try {
+      const prevKey = getKeyFromUrl(prevUrl);
+      if (prevKey) {
+        await deleteFromS3({ Key: prevKey });
+      }
+    } catch (e) {
+      console.warn('[avatar] Failed to delete avatar from S3:', e?.message || e);
+    }
+
+    // Clear field in profile
+    const updated = await userDB.updateProfile(req.user.id, { avatar_url: null });
+    return res.status(200).json({ status: 'success', data: { avatar_url: null, user: updated, deleted: true } });
+  } catch (error) {
+    next(error);
+  }
 };
 
 const createSendToken = (user, statusCode, res) => {
@@ -74,6 +105,74 @@ export const signup = async (req, res, next) => {
       ...profile
     }, 201, res);
   } catch (error) {
+    next(error);
+  }
+};
+
+// Upload avatar image to S3 and save URL on user profile
+export const uploadAvatar = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return next(new AppError('No file uploaded. Expected field "avatar"', 400));
+    }
+
+    const file = req.file;
+    // Get current user to check existing avatar
+    const currentUser = await userDB.getUserById(req.user.id);
+
+    // Build a safe S3 object key
+    const ext = path.extname(file.originalname || '.jpg').toLowerCase();
+    const filename = `${Date.now()}${ext}`;
+    const key = `avatars/${req.user.id}/${filename}`;
+
+    // Upload to S3
+    const result = await uploadToS3({
+      Key: key,
+      Body: file.buffer,
+      ContentType: file.mimetype,
+      Metadata: {
+        originalname: file.originalname,
+        uploadedBy: req.user.id,
+      },
+    });
+
+    // Get the public URL from the result
+    const avatarUrl = result.url || result;
+    
+    if (!avatarUrl) {
+      throw new Error('Failed to generate avatar URL');
+    }
+
+    // Save the new avatar URL
+    const updatedUser = await userDB.updateProfile(req.user.id, { 
+      avatar_url: avatarUrl 
+    });
+
+    // Best-effort: delete previous avatar if it exists and is different
+    try {
+      const prevUrl = currentUser?.avatar_url;
+      if (prevUrl && prevUrl !== avatarUrl) {
+        const prevKey = getKeyFromUrl(prevUrl);
+        if (prevKey && typeof prevKey === 'string' && prevKey !== key) {
+          await deleteFromS3({ Key: prevKey }).catch(e => 
+            console.warn('[avatar] Failed to delete old avatar:', e?.message || e)
+          );
+        }
+      }
+    } catch (e) {
+      // Log and continue; not fatal
+      console.warn('[avatar] Failed to clean up previous avatar:', e?.message || e);
+    }
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        user: updatedUser,
+        avatar_url: avatarUrl,
+      },
+    });
+  } catch (error) {
+    console.error('Avatar upload error:', error);
     next(error);
   }
 };
