@@ -1,0 +1,54 @@
+{
+  "name": "character-ai-backend",
+  "version": "1.0.0",
+  "description": "Backend for Character AI application",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "migrate:up": "node-pg-migrate up",
+    "migrate:down": "node-pg-migrate down",
+    "migrate:create": "node-pg-migrate create",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "ai",
+    "chat",
+    "character",
+    "together-ai"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.864.0",
+    "@aws-sdk/s3-request-presigner": "^3.864.0",
+    "@supabase/supabase-js": "^2.39.0",
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.6",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "helmet": "^7.1.0",
+    "ioredis": "^5.3.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1",
+    "node-cache": "^5.1.2",
+    "nodemon": "^3.0.2",
+    "p-queue": "^8.0.1",
+    "rate-limit-redis": "^4.1.1",
+    "redis": "^4.6.11",
+    "sharp": "^0.34.3",
+    "socket.io": "^4.7.2",
+    "together-ai": "^0.22.0",
+    "uuid": "^9.0.1"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "devDependencies": {
+    "node-pg-migrate": "^8.0.3",
+    "pg": "^8.16.3"
+  }
+}

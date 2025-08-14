@@ -1,0 +1,7 @@
+{
+  "migrations": [{
+    "name": "Initial migration",
+    "path": "./sql/migrations"
+  }],
+  "migrationsTable": "migrations"
+}

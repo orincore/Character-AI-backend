@@ -1,0 +1,14 @@
+{
+  "dev": {
+    "driver": "pg",
+    "host": "localhost",
+    "port": 5432,
+    "database": "character_ai",
+    "username": "postgres",
+    "password": "postgres"
+  },
+  "prod": {
+    "driver": "pg",
+    "connectionString": "${DATABASE_URL}"
+  }
+}

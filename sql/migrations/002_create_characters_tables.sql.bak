@@ -1,0 +1,74 @@
+-- Create characters table with personality attributes
+CREATE TABLE IF NOT EXISTS characters (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  creator_id UUID NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL,
+  persona TEXT NOT NULL,
+  avatar_url TEXT,
+  character_type TEXT NOT NULL CHECK (character_type IN ('girlfriend', 'boyfriend', 'friend', 'therapist', 'other')),
+  visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'public', 'shareable')),
+  nsfw_enabled BOOLEAN NOT NULL DEFAULT false,
+  
+  -- Personality sliders (0.0 to 1.0)
+  flirtiness FLOAT NOT NULL DEFAULT 0.5 CHECK (flirtiness >= 0 AND flirtiness <= 1),
+  shyness FLOAT NOT NULL DEFAULT 0.5 CHECK (shyness >= 0 AND shyness <= 1),
+  kindness FLOAT NOT NULL DEFAULT 0.7 CHECK (kindness >= 0 AND kindness <= 1),
+  rudeness FLOAT NOT NULL DEFAULT 0.3 CHECK (rudeness >= 0 AND rudeness <= 1),
+  confidence FLOAT NOT NULL DEFAULT 0.6 CHECK (confidence >= 0 AND confidence <= 1),
+  intelligence FLOAT NOT NULL DEFAULT 0.7 CHECK (intelligence >= 0 AND intelligence <= 1),
+  empathy FLOAT NOT NULL DEFAULT 0.7 CHECK (empathy >= 0 AND empathy <= 1),
+  humor FLOAT NOT NULL DEFAULT 0.5 CHECK (humor >= 0 AND humor <= 1),
+  aggression FLOAT NOT NULL DEFAULT 0.2 CHECK (aggression >= 0 AND aggression <= 1),
+  openness FLOAT NOT NULL DEFAULT 0.7 CHECK (openness >= 0 AND openness <= 1),
+  extroversion FLOAT NOT NULL DEFAULT 0.6 CHECK (extroversion >= 0 AND extroversion <= 1),
+  patience FLOAT NOT NULL DEFAULT 0.7 CHECK (patience >= 0 AND patience <= 1),
+  
+  -- Additional metadata
+  tags TEXT[],
+  first_message TEXT,
+  example_conversations JSONB,
+  
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Create character_shares table for explicit sharing
+CREATE TABLE IF NOT EXISTS character_shares (
+  character_id UUID NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
+  can_write BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (character_id, user_id)
+);
+
+-- Create indexes for better query performance
+CREATE INDEX IF NOT EXISTS idx_characters_creator_id ON characters(creator_id);
+CREATE INDEX IF NOT EXISTS idx_characters_visibility ON characters(visibility);
+CREATE INDEX IF NOT EXISTS idx_character_shares_user_id ON character_shares(user_id);
+
+-- Create chat_sessions table
+CREATE TABLE IF NOT EXISTS chat_sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  character_id UUID NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
+  title TEXT DEFAULT '',
+  ad_counter INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Create chat_messages table
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id BIGSERIAL PRIMARY KEY,
+  session_id UUID NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('system', 'user', 'assistant')),
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Create indexes for chat tables
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_character_id ON chat_sessions(character_id);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id ON chat_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages(session_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at ON chat_messages(created_at);

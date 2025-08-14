@@ -1,0 +1,5 @@
+{
+  "migrations-table": "migrations",
+  "migration-file-language": "sql",
+  "migrations-dir": "./sql/migrations"
+}
