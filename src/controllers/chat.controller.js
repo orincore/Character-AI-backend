@@ -29,6 +29,71 @@ export const createSession = async (req, res, next) => {
 };
 
 /**
+ * @desc    Delete a single message by ID (ownership enforced)
+ * @route   DELETE /api/v1/chat/messages/:messageId
+ * @access  Private
+ */
+export const deleteMessage = async (req, res, next) => {
+  try {
+    const { messageId } = req.params;
+    const userId = req.user.id;
+
+    if (!messageId) {
+      throw new AppError('Message ID is required', 400);
+    }
+
+    await chatService.deleteMessage(messageId, userId);
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Clear all messages across this user's sessions with a specific character
+ * @route   DELETE /api/v1/chat/characters/:characterId/messages
+ * @access  Private
+ */
+export const clearMessagesForCharacter = async (req, res, next) => {
+  try {
+    const { characterId } = req.params;
+    const userId = req.user.id;
+
+    if (!characterId) {
+      throw new AppError('Character ID is required', 400);
+    }
+
+    await chatService.clearChatWithCharacter(userId, characterId);
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Clear all messages in a session (keeps the session)
+ * @route   DELETE /api/v1/chat/sessions/:sessionId/messages
+ * @access  Private
+ */
+export const clearSessionMessages = async (req, res, next) => {
+  try {
+    const { sessionId } = req.params;
+    const userId = req.user.id;
+
+    if (!sessionId) {
+      throw new AppError('Session ID is required', 400);
+    }
+
+    await chatService.clearSessionMessages(sessionId, userId);
+
+    // No content on success
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * @desc    Get chat session details
  * @route   GET /api/v1/chat/sessions/:sessionId
  * @access  Private
@@ -203,3 +268,46 @@ export const deleteSession = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * @desc    Delete ALL chat sessions and their messages for the authenticated user
+ * @route   DELETE /api/v1/chat/sessions
+ * @access  Private
+ */
+export const deleteAllUserSessions = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    await chatService.deleteAllUserSessions(userId);
+    res.status(204).json({ status: 'success', data: null });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Delete a character (owner only) and cascade delete the user's sessions/messages with it
+ * @route   DELETE /api/v1/chat/characters/:characterId
+ * @access  Private
+ */
+export const deleteCharacterWithSessions = async (req, res, next) => {
+  try {
+    const { characterId } = req.params;
+    const userId = req.user.id;
+
+    if (!characterId) {
+      throw new AppError('Character ID is required', 400);
+    }
+
+    await chatService.deleteCharacterWithSessions(userId, characterId);
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Delete a character and all of this user's sessions/messages with it (owner only)
+ * @route   DELETE /api/v1/chat/characters/:characterId
+ * @access  Private
+ */
+// (duplicate removed)

@@ -1,4 +1,15 @@
-import { getGenderInfo } from '../config/prompts.js';
+// Local minimal gender info to avoid prompts.js dependency
+const GENDER_INFO_MAP = {
+  male: { title: 'Male', pronouns: { casual: 'he/him', formal: 'he/him' } },
+  female: { title: 'Female', pronouns: { casual: 'she/her', formal: 'she/her' } },
+  nonbinary: { title: 'Non-binary', pronouns: { casual: 'they/them', formal: 'they/them' } },
+  other: { title: 'Other', pronouns: { casual: 'they/them', formal: 'they/them' } }
+};
+
+function getGenderInfoLocal(key = 'other') {
+  const k = String(key || 'other').toLowerCase();
+  return GENDER_INFO_MAP[k] || GENDER_INFO_MAP.other;
+}
 
 /**
  * Formats character data with consistent defaults and structure
@@ -10,8 +21,8 @@ export function formatCharacterData(character) {
   // from the database, with no hardcoded defaults
   const personalityTraits = { ...character };
 
-  // Extract gender info
-  const genderInfo = getGenderInfo(character.character_gender || 'other');
+  // Extract gender info (local)
+  const genderInfo = getGenderInfoLocal(character.character_gender || 'other');
   
   // Build the formatted character
   return {

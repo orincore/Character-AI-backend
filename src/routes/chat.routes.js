@@ -14,7 +14,8 @@ router.use(chatRateLimiter);
 // Session routes
 router.route('/sessions')
   .post(chatController.createSession)
-  .get(chatController.getUserSessions);
+  .get(chatController.getUserSessions)
+  .delete(chatController.deleteAllUserSessions);
 
 router.route('/sessions/:sessionId')
   .get(chatController.getSession)
@@ -26,6 +27,19 @@ router.route('/send')
   .post(chatController.sendMessage);
 
 router.route('/sessions/:sessionId/messages')
-  .get(chatController.getSessionMessages);
+  .get(chatController.getSessionMessages)
+  .delete(chatController.clearSessionMessages);
+
+// Clear all messages for a user's chats with a character
+router.route('/characters/:characterId/messages')
+  .delete(chatController.clearMessagesForCharacter);
+
+// Delete a character (owner only) and cascade user's sessions/messages with it
+router.route('/characters/:characterId')
+  .delete(chatController.deleteCharacterWithSessions);
+
+// Delete a single message
+router.route('/messages/:messageId')
+  .delete(chatController.deleteMessage);
 
 export default router;

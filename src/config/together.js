@@ -15,10 +15,12 @@ export const DEFAULT_MODEL = 'NousResearch/Nous-Hermes-2-Mixtral-8x7B-DPO';
 
 // Export chat completion with default settings
 export async function chatCompletion(messages, options = {}) {
+  // Add slight temperature jitter for variation if not provided
+  const baseTemp = options.temperature ?? (0.85 + Math.random() * 0.15); // 0.85–1.0
   return together.chat.completions.create({
     model: DEFAULT_MODEL,
     messages,
-    temperature: 0.7,
+    temperature: baseTemp,
     max_tokens: 1000,
     ...options
   });
