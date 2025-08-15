@@ -6,7 +6,8 @@ import {
   updateCharacter, 
   deleteCharacter, 
   listCharacters,
-  uploadAvatar
+  uploadAvatar,
+  generateCharacterAvatar
 } from '../controllers/character.controller.js';
 import { protect } from '../middleware/auth.middleware.js';
 
@@ -42,5 +43,6 @@ router.route('/:id')
 
 // Upload character avatar
 router.post('/:id/avatar', upload.single('avatar'), uploadAvatar);
+router.post('/:id/avatar/generate', generateCharacterAvatar);
 
 export default router;

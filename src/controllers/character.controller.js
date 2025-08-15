@@ -1,7 +1,8 @@
 import supabase from '../config/supabaseClient.js';
 import AppError from '../utils/appError.js';
 import { v4 as uuidv4 } from 'uuid';
-import { uploadToS3 } from '../utils/s3.js';
+import { uploadToS3, deleteFromS3 } from '../utils/s3.js';
+import { generateImageWithStability } from '../utils/stability.js';
 import { processImage, getImageOutputConfig } from '../utils/imageProcessor.js';
 import { formatCharacterData, validateCharacterData } from '../utils/characterUtils.js';
 
@@ -11,6 +12,7 @@ function getGenderInfo(gender) {
   switch (g) {
     case 'female':
       return { emoji: '💜', pronouns: { subject: 'she', object: 'her', possessive: 'her' } };
+
     case 'male':
       return { emoji: '💙', pronouns: { subject: 'he', object: 'him', possessive: 'his' } };
     case 'nonbinary':
@@ -414,6 +416,17 @@ export const uploadAvatar = async (req, res, next) => {
     }
 
     const file = req.file;
+
+    // Fetch existing avatar URL to delete after successful replacement
+    let oldAvatarUrl = null;
+    try {
+      const { data: existing } = await supabase
+        .from('characters')
+        .select('avatar_url')
+        .eq('id', id)
+        .single();
+      oldAvatarUrl = existing?.avatar_url || null;
+    } catch (_) {}
     
     // Process the image (compress and resize)
     const processedImage = await processImage(file.buffer, {
@@ -457,6 +470,11 @@ export const uploadAvatar = async (req, res, next) => {
 
     if (error) throw error;
 
+    // Best-effort delete of old avatar if it exists and differs
+    if (oldAvatarUrl && oldAvatarUrl !== avatarUrl) {
+      try { await deleteFromS3(oldAvatarUrl); } catch (e) { console.warn('Failed to delete old avatar:', e?.message || e); }
+    }
+
     res.status(200).json({
       status: 'success',
       data: {
@@ -466,6 +484,67 @@ export const uploadAvatar = async (req, res, next) => {
     });
   } catch (error) {
     console.error('Error in uploadAvatar:', error);
+    next(error);
+  }
+};
+
+// Generate character avatar via Stability AI (owner only)
+export const generateCharacterAvatar = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    await checkCharacterAccess(id, req.user.id, true);
+
+    const { prompt, output_format = 'webp', width, height, seed, model } = req.body || {};
+    if (!prompt || !prompt.trim()) {
+      throw new AppError('Prompt is required', 400);
+    }
+
+    // Fetch existing avatar URL to delete after successful replacement
+    let oldAvatarUrl = null;
+    try {
+      const { data: existing } = await supabase
+        .from('characters')
+        .select('avatar_url')
+        .eq('id', id)
+        .single();
+      oldAvatarUrl = existing?.avatar_url || null;
+    } catch (_) {}
+
+    const { buffer, contentType } = await generateImageWithStability({
+      prompt: prompt.trim(), output_format, width, height, seed, model
+    });
+
+    const ext = contentType === 'image/png' ? 'png' : (contentType === 'image/jpeg' ? 'jpg' : 'webp');
+    const fileName = `${uuidv4()}.${ext}`;
+    const filePath = `avatars/${id}/${fileName}`;
+
+    const uploadResult = await uploadToS3({
+      Key: filePath,
+      Body: buffer,
+      ContentType: contentType,
+      CacheControl: 'max-age=31536000'
+    });
+
+    const avatarUrl = uploadResult.url;
+
+    const { data: character, error } = await supabase
+      .from('characters')
+      .update({ avatar_url: avatarUrl, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw error;
+
+    // Best-effort delete of old avatar if it exists and differs
+    if (oldAvatarUrl && oldAvatarUrl !== avatarUrl) {
+      try { await deleteFromS3(oldAvatarUrl); } catch (e) { console.warn('Failed to delete old avatar:', e?.message || e); }
+    }
+
+    res.status(200).json({
+      status: 'success',
+      data: { avatar_url: avatarUrl, character: formatCharacterResponse(character, req.user.id) }
+    });
+  } catch (error) {
     next(error);
   }
 };

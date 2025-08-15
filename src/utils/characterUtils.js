@@ -31,7 +31,17 @@ export function formatCharacterData(character) {
     name: character.name || 'Unnamed Character',
     description: character.description || '',
     persona: character.persona || '',
-    avatar_url: character.avatar_url || '',
+    // Use the same URL decoding technique used for user profile pictures
+    avatar_url: (() => {
+      const raw = character.avatar_url || '';
+      if (!raw) return '';
+      try {
+        // decodeURI preserves reserved characters but decodes %20 etc.
+        return decodeURI(raw);
+      } catch (_) {
+        return raw;
+      }
+    })(),
     character_type: character.character_type || 'friend',
     character_gender: character.character_gender || 'other',
     visibility: character.visibility || 'private',

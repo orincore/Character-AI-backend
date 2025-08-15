@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 // S3 Client Configuration
@@ -9,6 +9,35 @@ const s3Config = {
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   },
   // For AWS SDK v3, we don't need signatureVersion or s3ForcePathStyle here
+};
+
+// Normalize a URL or key to a plain S3 key
+const getKeyFromUrl = (urlOrKey) => {
+  if (!urlOrKey) return null;
+  try {
+    const u = new URL(urlOrKey);
+    return decodeURIComponent(u.pathname.replace(/^\/+/, ''));
+  } catch {
+    return decodeURIComponent(String(urlOrKey).replace(/^\/+/, ''));
+  }
+};
+
+// Delete an object from S3 by key or full URL
+export const deleteFromS3 = async (keyOrUrl) => {
+  try {
+    validateEnvVars();
+    const Key = getKeyFromUrl(keyOrUrl);
+    if (!Key) throw new Error('deleteFromS3 requires a valid key or URL');
+    const params = { Bucket: process.env.AWS_S3_BUCKET, Key };
+    await s3Client.send(new DeleteObjectCommand(params));
+    return { success: true, key: Key };
+  } catch (error) {
+    console.error('Error deleting from S3:', {
+      message: error.message,
+      keyOrUrl
+    });
+    throw error;
+  }
 };
 
 // For local development or custom endpoints
