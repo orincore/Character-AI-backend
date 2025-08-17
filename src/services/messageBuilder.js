@@ -94,7 +94,7 @@ export async function buildMessagesForSession(sessionId, userId, userText, optio
   ].filter(Boolean);
 
   // Two simple templates
-  const ROMANTIC_PROMPT = [
+  const NSFW_PROMPT = [
     "Style: Natural, casual, and human-like with contractions and varied rhythm.",
     "Always use English only. If another language is used, politely decline.",
     "Tone: Warm, playful, and gently flirty — avoid rushing into intimacy.",
