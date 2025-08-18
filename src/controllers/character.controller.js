@@ -206,12 +206,12 @@ const checkCharacterAccess = async (characterId, userId, requireOwner = false) =
     throw new AppError('Character not found', 404);
   }
 
-  const isOwner = character.creator_id === userId;
+  const isOwner = userId && character.creator_id === userId;
   const isPublic = character.visibility === 'public';
   
   // Check if user has explicit access
   let hasSharedAccess = false;
-  if (!isOwner) {
+  if (userId && !isOwner) {
     const { count } = await supabase
       .from('character_shares')
       .select('*', { count: 'exact', head: true})
@@ -225,7 +225,12 @@ const checkCharacterAccess = async (characterId, userId, requireOwner = false) =
     throw new AppError('Not authorized to perform this action', 403);
   }
 
-  if (!isOwner && !isPublic && !hasSharedAccess) {
+  // If unauthenticated, only allow public
+  if (!userId && !isPublic) {
+    throw new AppError('Access denied', 403);
+  }
+
+  if (userId && !isOwner && !isPublic && !hasSharedAccess) {
     throw new AppError('Access denied', 403);
   }
 
@@ -407,7 +412,8 @@ export const createCharacter = async (req, res, next) => {
 export const getCharacter = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { isOwner } = await checkCharacterAccess(id, req.user.id);
+    const userId = req.user?.id; // optional for public access
+    await checkCharacterAccess(id, userId);
 
     const { data: character, error } = await supabase
       .from('characters')

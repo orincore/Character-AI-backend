@@ -15,6 +15,36 @@ export const createSession = async (req, res, next) => {
       throw new AppError('Character ID is required', 400);
     }
 
+    // Enforce access: allow sessions with public characters for any user,
+    // or if the user is the owner, or has been shared the character.
+    const { data: character, error: charErr } = await chatService.default?.supabase
+      ? chatService.default.supabase
+      : (await import('../config/supabaseClient.js')).default
+        .from('characters')
+        .select('id, creator_id, visibility')
+        .eq('id', characterId)
+        .single();
+    if (charErr || !character) {
+      throw new AppError('Character not found', 404);
+    }
+
+    const isPublic = character.visibility === 'public';
+    const isOwner = character.creator_id === userId;
+    let hasSharedAccess = false;
+    if (!isOwner && !isPublic) {
+      const supabase = (await import('../config/supabaseClient.js')).default;
+      const { count } = await supabase
+        .from('character_shares')
+        .select('*', { count: 'exact', head: true })
+        .eq('character_id', characterId)
+        .eq('user_id', userId);
+      hasSharedAccess = (count || 0) > 0;
+    }
+
+    if (!isPublic && !isOwner && !hasSharedAccess) {
+      throw new AppError('Access denied for this character', 403);
+    }
+
     const session = await chatService.createSession(userId, characterId, title);
     
     res.status(201).json({

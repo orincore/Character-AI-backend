@@ -33,30 +33,29 @@ const upload = multer({
   },
 });
 
-// Apply protect middleware to all routes
-router.use(protect);
-
-// Popular feed
-router.get('/feed/popular', getPopularFeed);
+// Popular feed (protected)
+router.get('/feed/popular', protect, getPopularFeed);
 
 // Character CRUD routes
 router.route('/')
-  .post(createCharacter)
-  .get(listCharacters);
+  .post(protect, createCharacter)
+  .get(protect, listCharacters);
 
-router.route('/:id')
-  .get(getCharacter)
-  .put(updateCharacter)
-  .delete(deleteCharacter);
+// Public: Get character by id
+router.get('/:id', getCharacter);
 
-// Upload character avatar
-router.post('/:id/avatar', upload.single('avatar'), uploadAvatar);
-router.post('/:id/avatar/generate', generateCharacterAvatar);
+// Protected: update and delete
+router.put('/:id', protect, updateCharacter);
+router.delete('/:id', protect, deleteCharacter);
 
-// Popularity interactions
-router.post('/:id/like', likeCharacter);
-router.delete('/:id/like', unlikeCharacter);
-router.post('/:id/share', shareCharacter);
-router.post('/:id/use', useCharacter);
+// Upload character avatar (protected)
+router.post('/:id/avatar', protect, upload.single('avatar'), uploadAvatar);
+router.post('/:id/avatar/generate', protect, generateCharacterAvatar);
+
+// Popularity interactions (protected)
+router.post('/:id/like', protect, likeCharacter);
+router.delete('/:id/like', protect, unlikeCharacter);
+router.post('/:id/share', protect, shareCharacter);
+router.post('/:id/use', protect, useCharacter);
 
 export default router;
