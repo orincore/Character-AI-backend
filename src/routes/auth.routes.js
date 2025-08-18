@@ -11,7 +11,9 @@ import {
   sendEmailVerification,
   verifyEmailOtp,
   sendPhoneVerification,
-  verifyPhoneOtp
+  verifyPhoneOtp,
+  sendPasswordResetOtp,
+  confirmPasswordResetOtp
 } from '../controllers/auth.controller.js';
 import { uploadSingle } from '../middleware/upload.js';
 
@@ -39,5 +41,11 @@ router.post('/verify/email/confirm', verifyEmailOtp);
 // Phone (WhatsApp) verification (OTP)
 router.post('/verify/phone/send', sendPhoneVerification);
 router.post('/verify/phone/confirm', verifyPhoneOtp);
+
+// Password reset via OTP (choose method: email or phone)
+// Body for send: { method: 'email' | 'phone', contactNumber? }
+// Body for confirm: { method: 'email' | 'phone', otp, newPassword, uuid?, contactNumber? }
+router.post('/password/reset/send-otp', sendPasswordResetOtp);
+router.post('/password/reset/confirm', confirmPasswordResetOtp);
 
 export default router;

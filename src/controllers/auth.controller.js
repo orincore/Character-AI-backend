@@ -7,7 +7,7 @@ import AppError from '../utils/appError.js';
 import env from '../config/env.js';
 import { uploadToS3, deleteFromS3, getKeyFromUrl } from '../config/s3.js';
 import path from 'path';
-import { sendEmail, buildOtpEmail, buildWelcomeEmail } from '../services/email.service.js';
+import { sendEmail, buildOtpEmail, buildWelcomeEmail, buildSecurityAlertEmail } from '../services/email.service.js';
 import { redisClient } from '../config/redis.js';
 
 const signToken = (id) => {
@@ -18,8 +18,40 @@ const signToken = (id) => {
 
 // ============ Phone (WhatsApp) OTP via external OTP service ============
 const OTP_BASE_URL = process.env.OTP_BASE_URL || 'https://otp.orincore.com';
+const OTP_API_KEY = process.env.OTP_API_KEY || '';
+
+// ============ IP utilities ============
+const extractClientIp = (req) => {
+  const xf = req.headers['x-forwarded-for'];
+  if (xf && typeof xf === 'string') {
+    // x-forwarded-for can be a list: client, proxy1, proxy2
+    const first = xf.split(',')[0]?.trim();
+    return first || req.ip || '';
+  }
+  if (Array.isArray(xf) && xf.length > 0) {
+    return xf[0] || req.ip || '';
+  }
+  return (req.ip || '').toString();
+};
+
+const resolveIpLocation = async (ip) => {
+  try {
+    if (!ip) return '';
+    // Skip local/private ranges
+    if (/^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(ip) || ip === '::1') {
+      return '';
+    }
+    const url = `https://ipapi.co/${encodeURIComponent(ip)}/json/`;
+    const { data } = await axios.get(url, { timeout: 5000 });
+    if (!data || data.error) return '';
+    const parts = [data.city, data.region, data.country_name].filter(Boolean);
+    return parts.join(', ');
+  } catch (_) {
+    return '';
+  }
+};
+
 const OTP_APP_NAME = env.APP_NAME || 'Clyra AI';
-const OTP_API_KEY = process.env.OTP_API_KEY || '689914b5f3f23ea10283ab79';
 
 async function isWhatsappGatewayReady() {
   try {
@@ -102,6 +134,127 @@ export const sendPhoneVerification = async (req, res, next) => {
       message: 'OTP sent via WhatsApp',
       data: { uuid: data.uuid, contactNumber, expiresIn: ttl }
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Send password reset OTP via chosen method: 'email' or 'phone'
+export const sendPasswordResetOtp = async (req, res, next) => {
+  try {
+    const { method, contactNumber } = req.body || {};
+    const user = await userDB.getUserById(req.user.id);
+    if (!user) return next(new AppError('User not found', 404));
+
+    if (method === 'phone') {
+      const ready = await isWhatsappGatewayReady();
+      if (!ready) {
+        return res.status(200).json({ status: 'success', message: 'WhatsApp unavailable. Choose email method.', data: { whatsapp_ready: false } });
+      }
+      const number = contactNumber || user.phone_number;
+      if (!number) return next(new AppError('contactNumber is required for phone method', 400));
+
+      const payload = { contactNumber: number, reason: 'password_reset', appName: OTP_APP_NAME };
+      const { data } = await axios.post(`${OTP_BASE_URL}/api/otp/send`, payload, { timeout: 8000, headers: { 'x-api-key': OTP_API_KEY } });
+      if (!data?.success || !data?.uuid) return next(new AppError('Failed to send OTP. Please try again later.', 502));
+
+      const ttl = (typeof data.expiresIn === 'number' && data.expiresIn > 0) ? data.expiresIn : 300;
+      const key = `phone_pwd:${req.user.id}`;
+      await redisClient.del(key);
+      const value = JSON.stringify({ uuid: data.uuid, contactNumber: number, reason: 'password_reset' });
+      const ok = await redisClient.set(key, value, ttl);
+      if (!ok) return next(new AppError('Failed to persist OTP session. Please retry.', 500));
+
+      return res.status(200).json({ status: 'success', message: 'Password reset OTP sent via WhatsApp', data: { uuid: data.uuid, contactNumber: number, expiresIn: ttl } });
+    }
+
+    // default to email
+    const otp = generateOtp();
+    const ttlSeconds = 10 * 60;
+    const key = `email_pwd:${user.id}`;
+    await redisClient.del(key);
+    const stored = await redisClient.set(key, otp, ttlSeconds);
+    if (!stored) return next(new AppError('Failed to create reset code. Please try again later.', 500));
+
+    const { subject, text, html } = buildOtpEmail({ name: user.first_name || 'there', otp, minutes: 10, appName: env.APP_NAME });
+    const toEmail = (process.env.OTP_TEST_EMAIL && env.NODE_ENV !== 'production') ? process.env.OTP_TEST_EMAIL : user.email;
+    await sendEmail({ to: toEmail, subject, text, html });
+    return res.status(200).json({ status: 'success', message: 'Password reset code sent to your email.' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Confirm password reset with OTP via chosen method
+export const confirmPasswordResetOtp = async (req, res, next) => {
+  try {
+    const { method, otp, uuid, contactNumber, newPassword } = req.body || {};
+    if (!newPassword || String(newPassword).length < 8) {
+      return next(new AppError('newPassword must be at least 8 characters long', 400));
+    }
+    const user = await userDB.getUserById(req.user.id);
+    if (!user) return next(new AppError('User not found', 404));
+
+    if (method === 'phone') {
+      const key = `phone_pwd:${req.user.id}`;
+      const cachedRaw = await redisClient.get(key);
+      if (!cachedRaw) return next(new AppError('OTP session expired or not found. Please request a new code.', 400));
+      const cached = JSON.parse(cachedRaw);
+      const finalUuid = uuid || cached.uuid;
+      const finalContact = contactNumber || cached.contactNumber || user.phone_number;
+      if (!finalUuid || !finalContact) return next(new AppError('Invalid verification session. Please resend OTP.', 400));
+
+      if (!otp) return next(new AppError('otp is required', 400));
+      const verifyUrl = `${OTP_BASE_URL}/api/otp/verify`;
+      const { data } = await axios.get(verifyUrl, { params: { uuid: finalUuid, contactNumber: finalContact, otp }, timeout: 8000, headers: { 'x-api-key': OTP_API_KEY } });
+      if (!data?.success) return next(new AppError('Invalid or expired OTP.', 400));
+
+      // Update password
+      const salt = await bcrypt.genSalt(12);
+      const hash = await bcrypt.hash(String(newPassword), salt);
+      const updated = await userDB.updateProfile(user.id, { password: hash, password_changed_at: new Date() });
+      await redisClient.del(key);
+      // Security alert email (best-effort)
+      if (env.SECURITY_ALERTS_ENABLED) {
+        try {
+          const ip = extractClientIp(req);
+          const location = await resolveIpLocation(ip);
+          const ua = req.headers['user-agent'] || '';
+          const whenISO = new Date().toISOString();
+          const { subject, text, html } = buildSecurityAlertEmail({ type: 'password_reset', name: user.first_name || 'there', appName: env.APP_NAME, ip, userAgent: ua, whenISO, location });
+          await sendEmail({ to: user.email, subject, text, html });
+        } catch (e) {
+          console.warn('[security-email] Failed to send password reset alert (phone):', e?.message || e);
+        }
+      }
+      return res.status(200).json({ status: 'success', message: 'Password reset successfully.', data: { user: updated } });
+    }
+
+    // email method
+    if (!otp) return next(new AppError('OTP is required', 400));
+    const key = `email_pwd:${user.id}`;
+    const cached = await redisClient.get(key);
+    if (!cached) return next(new AppError('OTP expired or not found. Please request a new code.', 400));
+    if (cached !== otp) return next(new AppError('Invalid verification code.', 400));
+
+    const salt = await bcrypt.genSalt(12);
+    const hash = await bcrypt.hash(String(newPassword), salt);
+    const updated = await userDB.updateProfile(user.id, { password: hash, password_changed_at: new Date() });
+    await redisClient.del(key);
+    // Security alert email (best-effort)
+    if (env.SECURITY_ALERTS_ENABLED) {
+      try {
+        const ip = extractClientIp(req);
+        const location = await resolveIpLocation(ip);
+        const ua = req.headers['user-agent'] || '';
+        const whenISO = new Date().toISOString();
+        const { subject, text, html } = buildSecurityAlertEmail({ type: 'password_reset', name: user.first_name || 'there', appName: env.APP_NAME, ip, userAgent: ua, whenISO, location });
+        await sendEmail({ to: user.email, subject, text, html });
+      } catch (e) {
+        console.warn('[security-email] Failed to send password reset alert (email):', e?.message || e);
+      }
+    }
+    return res.status(200).json({ status: 'success', message: 'Password reset successfully.', data: { user: updated } });
   } catch (error) {
     next(error);
   }
@@ -449,6 +602,20 @@ export const login = async (req, res, next) => {
 
     // 4) Update last login
     await userDB.updateProfile(user.id, { last_login: new Date() });
+
+    // 4.5) Send login security alert (best-effort)
+    if (env.SECURITY_ALERTS_ENABLED) {
+      try {
+        const ip = extractClientIp(req);
+        const location = await resolveIpLocation(ip);
+        const ua = req.headers['user-agent'] || '';
+        const whenISO = new Date().toISOString();
+        const { subject, text, html } = buildSecurityAlertEmail({ type: 'login', name: user.first_name || 'there', appName: env.APP_NAME, ip, userAgent: ua, whenISO, location });
+        await sendEmail({ to: user.email, subject, text, html });
+      } catch (e) {
+        console.warn('[security-email] Failed to send login alert:', e?.message || e);
+      }
+    }
 
     // 5) Send token to client
     createSendToken({

@@ -14,6 +14,7 @@ const env = {
   NODE_ENV: process.env.NODE_ENV || 'development',
   CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
   APP_URL: process.env.APP_URL, // optional, for building absolute links in emails
+  SECURITY_ALERTS_ENABLED: String(process.env.SECURITY_ALERTS_ENABLED || 'true').toLowerCase() === 'true',
   
   // JWT
   JWT_SECRET: process.env.JWT_SECRET,

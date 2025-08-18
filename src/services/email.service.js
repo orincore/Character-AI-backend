@@ -190,6 +190,91 @@ export function buildOtpEmail({ name = 'there', otp, minutes = 10, appName = 'Cl
   return { subject, text, html };
 }
 
+export function buildSecurityAlertEmail({
+  type = 'login', // 'login' | 'password_reset'
+  name = 'there',
+  appName = 'Clyra AI',
+  ip = '',
+  userAgent = '',
+  whenISO = new Date().toISOString(),
+  location = '',
+  supportEmail = 'support@orincore.com'
+}) {
+  const action = type === 'password_reset' ? 'Password Reset' : 'New Login';
+  const subject = `${appName}: ${action} Alert`;
+  const text = `Hi ${name},\n\nWe noticed a ${action.toLowerCase()} on your account.\n\nTime: ${whenISO}\nIP: ${ip}\nLocation: ${location || 'Unknown'}\nDevice: ${userAgent || 'Unknown'}\n\nIf this was you, no action is needed. If you don't recognize this activity, please reset your password immediately or contact support at ${supportEmail}.\n\n— The ${appName} Security Team`;
+  const html = `
+  <!DOCTYPE html>
+  <html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      body,table,td,a{ -ms-text-size-adjust:100%; -webkit-text-size-adjust:100%; }
+      table,td{ mso-table-lspace:0pt; mso-table-rspace:0pt; }
+      img{ -ms-interpolation-mode:bicubic; border:0; outline:none; text-decoration:none; }
+      table{ border-collapse:collapse !important; }
+      body{ margin:0 !important; padding:0 !important; width:100% !important; height:100% !important; background-color:#0E0B1F; }
+      a { color: #6C5CE7; text-decoration: none; }
+      @media screen and (max-width:600px){ .container{ width:100% !important; } .px{ padding-left:20px !important; padding-right:20px !important; } }
+    </style>
+    <title>${appName} • ${action} Alert</title>
+  </head>
+  <body style="background-color:#0E0B1F;">
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">${action} alert</div>
+    <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%">
+      <tr>
+        <td align="center" style="padding:32px 12px;">
+          <table class="container" border="0" cellpadding="0" cellspacing="0" role="presentation" width="640" style="width:640px; max-width:640px;">
+            <tr>
+              <td style="background:#15122A; border-radius:16px; box-shadow:0 12px 32px rgba(24,16,80,.35);">
+                <table width="100%" role="presentation" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td style="background:linear-gradient(135deg,#6C5CE7,#4B43BD); padding:28px 28px; border-top-left-radius:16px;border-top-right-radius:16px;">
+                      <table width="100%" role="presentation">
+                        <tr>
+                          <td align="left" style="font-family:Segoe UI,Roboto,Arial,sans-serif; font-size:22px; font-weight:800; color:#FFFFFF; letter-spacing:.3px;">${appName}</td>
+                          <td align="right" style="font-family:Segoe UI,Roboto,Arial,sans-serif; font-size:12px; color:#F3F2FF;">Security Alert</td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                  <tr><td style="height:1px; background:linear-gradient(90deg, rgba(108,92,231,.0), rgba(108,92,231,.45), rgba(108,92,231,.0));"></td></tr>
+                </table>
+                <table width="100%" role="presentation" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td class="px" style="padding:28px; font-family:Segoe UI,Roboto,Arial,sans-serif;">
+                      <p style="margin:0 0 10px; color:#B8B5D8; font-size:16px;">Hi ${name},</p>
+                      <h2 style="margin:0 0 12px; color:#FFFFFF; font-size:22px; font-weight:800;">${action} on your account</h2>
+                      <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; max-width:520px; background:#1D1840; border:1px solid #3C3781; border-radius:12px; padding:12px 16px; color:#E9E7FF; font-family:Segoe UI,Roboto,Arial,sans-serif; font-size:14px;">
+                        <tr><td style="padding:6px 4px;">Time</td><td style="padding:6px 4px;" align="right"><strong>${whenISO}</strong></td></tr>
+                        <tr><td style="padding:6px 4px;">IP</td><td style="padding:6px 4px;" align="right"><strong>${ip || 'Unknown'}</strong></td></tr>
+                        <tr><td style="padding:6px 4px;">Location</td><td style="padding:6px 4px;" align="right"><strong>${location || 'Unknown'}</strong></td></tr>
+                        <tr><td style="padding:6px 4px;">Device</td><td style="padding:6px 4px;" align="right"><strong>${(userAgent || 'Unknown').replace(/</g,'&lt;')}</strong></td></tr>
+                      </table>
+                      <p style="margin:16px 0 0; color:#D7D4F3; font-size:14px;">If this was you, no action is needed. If you don’t recognize this activity, please reset your password immediately or contact <a href="mailto:${supportEmail}" style="color:#A89BFF; text-decoration:underline;">${supportEmail}</a>.</p>
+                    </td>
+                  </tr>
+                </table>
+                <table width="100%" role="presentation" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td style="padding:18px 28px 26px; border-top:1px solid rgba(255,255,255,.06); font-family:Segoe UI,Roboto,Arial,sans-serif; color:#A8A5C9; font-size:12px;">
+                      <div style="margin:0 0 4px;">&copy; ${new Date().getFullYear()} ${appName}. All rights reserved.</div>
+                      <div style="color:#8F8BB5;">Security notification</div>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+  </html>`;
+  return { subject, text, html };
+}
+
 export function buildWelcomeEmail({ name = 'there', appName = 'Clyra AI', ctaUrl = '', supportEmail = 'support@orincore.com' }) {
   const subject = `Welcome to ${appName}! Your account is verified`;
   const text = `Hi ${name},\n\nYour ${appName} account is now fully verified. You can create your own AI characters and start chatting with them right away.\n\nOpen ${appName} now to create your first character!\n\nNeed help? Contact ${supportEmail}.\n\n— The ${appName} Team`;
