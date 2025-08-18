@@ -1,5 +1,6 @@
 import AppError from '../utils/appError.js';
 import * as chatService from '../services/chat.service.js';
+import supabase from '../config/supabaseClient.js';
 
 /**
  * @desc    Create a new chat session
@@ -17,13 +18,11 @@ export const createSession = async (req, res, next) => {
 
     // Enforce access: allow sessions with public characters for any user,
     // or if the user is the owner, or has been shared the character.
-    const { data: character, error: charErr } = await chatService.default?.supabase
-      ? chatService.default.supabase
-      : (await import('../config/supabaseClient.js')).default
-        .from('characters')
-        .select('id, creator_id, visibility')
-        .eq('id', characterId)
-        .single();
+    const { data: character, error: charErr } = await supabase
+      .from('characters')
+      .select('id, creator_id, visibility')
+      .eq('id', characterId)
+      .single();
     if (charErr || !character) {
       throw new AppError('Character not found', 404);
     }
@@ -32,7 +31,6 @@ export const createSession = async (req, res, next) => {
     const isOwner = character.creator_id === userId;
     let hasSharedAccess = false;
     if (!isOwner && !isPublic) {
-      const supabase = (await import('../config/supabaseClient.js')).default;
       const { count } = await supabase
         .from('character_shares')
         .select('*', { count: 'exact', head: true })
