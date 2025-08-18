@@ -22,22 +22,27 @@ export const sendForgotPasswordWhatsappOtp = async (req, res, next) => {
     const { contactNumber } = req.body || {};
     if (!contactNumber) return next(new AppError('contactNumber is required', 400));
 
-    // Avoid enumeration: always respond success, only send if user exists
-    const user = await userDB.findUserByIdentifier(contactNumber).catch(() => null);
-    if (user && user.id && (user.phone_number || user.email)) {
-      try {
-        const payload = { contactNumber, reason: 'Password reset', appName: OTP_APP_NAME };
-        const { data } = await axios.post(`${OTP_BASE_URL}/api/otp/send`, payload, { timeout: 8000, headers: { 'x-api-key': OTP_API_KEY } });
-        if (data?.success && data?.uuid) {
-          const ttl = (typeof data.expiresIn === 'number' && data.expiresIn > 0) ? data.expiresIn : 300;
-          const key = `pwd_whatsapp_public:${user.id}`;
-          await redisClient.del(key);
-          const value = JSON.stringify({ uuid: data.uuid, contactNumber, reason: 'Password reset' });
-          await redisClient.set(key, value, ttl);
-        }
-      } catch (e) {
-        console.warn('[forgot-password-wa] Failed to send WhatsApp OTP:', e?.message || e);
+    // Check gateway readiness (informational)
+    const ready = await isWhatsappGatewayReady();
+    if (!ready) {
+      return res.status(200).json({ status: 'success', message: 'WhatsApp verification unavailable. Please try email method.' });
+    }
+
+    // Attempt to send OTP regardless of user existence to avoid format mismatches.
+    // Still avoid enumeration by returning a generic response.
+    try {
+      const payload = { contactNumber, reason: 'Password reset', appName: OTP_APP_NAME };
+      const { data } = await axios.post(`${OTP_BASE_URL}/api/otp/send`, payload, { timeout: 8000, headers: { 'x-api-key': OTP_API_KEY } });
+      if (data?.success && data?.uuid) {
+        const ttl = (typeof data.expiresIn === 'number' && data.expiresIn > 0) ? data.expiresIn : 300;
+        // Store session by phone for public flow
+        const key = `pwd_whatsapp_public_phone:${contactNumber}`;
+        await redisClient.del(key);
+        const value = JSON.stringify({ uuid: data.uuid, contactNumber, reason: 'Password reset' });
+        await redisClient.set(key, value, ttl);
       }
+    } catch (e) {
+      console.warn('[forgot-password-wa] Failed to send WhatsApp OTP:', e?.message || e);
     }
 
     return res.status(200).json({ status: 'success', message: 'If an account with that number exists, a reset code has been sent via WhatsApp.' });
@@ -59,8 +64,13 @@ export const confirmForgotPasswordWhatsappOtp = async (req, res, next) => {
     const user = await userDB.findUserByIdentifier(contactNumber);
     if (!user) return next(new AppError('Invalid contact or code.', 400));
 
-    const key = `pwd_whatsapp_public:${user.id}`;
-    const cachedRaw = await redisClient.get(key);
+    // Prefer phone-keyed session; fall back to legacy user-keyed session
+    const phoneKey = `pwd_whatsapp_public_phone:${contactNumber}`;
+    const userKey = `pwd_whatsapp_public:${user.id}`;
+    let cachedRaw = await redisClient.get(phoneKey);
+    if (!cachedRaw) {
+      cachedRaw = await redisClient.get(userKey);
+    }
     if (!cachedRaw) return next(new AppError('OTP session expired or not found. Please request a new code.', 400));
     const cached = JSON.parse(cachedRaw);
     const finalUuid = uuid || cached.uuid;
@@ -75,7 +85,10 @@ export const confirmForgotPasswordWhatsappOtp = async (req, res, next) => {
     const salt = await bcrypt.genSalt(12);
     const hash = await bcrypt.hash(String(newPassword), salt);
     const updated = await userDB.updateProfile(user.id, { password: hash, password_changed_at: new Date() });
-    await redisClient.del(key);
+    await Promise.all([
+      redisClient.del(phoneKey),
+      redisClient.del(userKey)
+    ]);
 
     // Security alert email (best-effort)
     if (env.SECURITY_ALERTS_ENABLED) {
