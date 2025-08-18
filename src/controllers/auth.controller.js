@@ -16,6 +16,84 @@ const signToken = (id) => {
   });
 };
 
+// ===================== Public forgot-password via email (no auth) =====================
+// Step 1: user submits their email to receive an OTP
+export const sendForgotPasswordEmailOtp = async (req, res, next) => {
+  try {
+    const { email } = req.body || {};
+    if (!email) return next(new AppError('email is required', 400));
+
+    // Avoid user enumeration: always respond success, but only send email if user exists
+    const user = await userDB.findUserByIdentifier(email).catch(() => null);
+    if (user && user.id && user.email) {
+      const otp = generateOtp();
+      const ttlSeconds = 10 * 60;
+      const key = `pwd_email_public:${user.id}`;
+      await redisClient.del(key);
+      await redisClient.set(key, otp, ttlSeconds);
+
+      const { subject, text, html } = buildOtpEmail({ name: user.first_name || 'there', otp, minutes: 10, appName: env.APP_NAME });
+      const toEmail = (process.env.OTP_TEST_EMAIL && env.NODE_ENV !== 'production') ? process.env.OTP_TEST_EMAIL : user.email;
+      try {
+        await sendEmail({ to: toEmail, subject, text, html });
+      } catch (e) {
+        console.warn('[forgot-password] Failed to send OTP email:', e?.message || e);
+      }
+    }
+
+    return res.status(200).json({ status: 'success', message: 'If an account with that email exists, a reset code has been sent.' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Step 2: user submits email + otp + newPassword to reset
+export const confirmForgotPasswordEmailOtp = async (req, res, next) => {
+  try {
+    const { email, otp, newPassword } = req.body || {};
+    if (!email) return next(new AppError('email is required', 400));
+    if (!otp) return next(new AppError('OTP is required', 400));
+    if (!newPassword || String(newPassword).length < 8) {
+      return next(new AppError('newPassword must be at least 8 characters long', 400));
+    }
+
+    const user = await userDB.findUserByIdentifier(email);
+    if (!user) {
+      // Avoid enumeration: generic error
+      return next(new AppError('Invalid email or code.', 400));
+    }
+
+    const key = `pwd_email_public:${user.id}`;
+    const cached = await redisClient.get(key);
+    if (!cached) return next(new AppError('Code expired or not found. Please request a new code.', 400));
+    if (cached !== otp) return next(new AppError('Invalid verification code.', 400));
+
+    // Update password
+    const salt = await bcrypt.genSalt(12);
+    const hash = await bcrypt.hash(String(newPassword), salt);
+    const updated = await userDB.updateProfile(user.id, { password: hash, password_changed_at: new Date() });
+    await redisClient.del(key);
+
+    // Security alert email (best-effort)
+    if (env.SECURITY_ALERTS_ENABLED) {
+      try {
+        const ip = extractClientIp(req);
+        const location = await resolveIpLocation(ip);
+        const ua = req.headers['user-agent'] || '';
+        const whenISO = new Date().toISOString();
+        const { subject, text, html } = buildSecurityAlertEmail({ type: 'password_reset', name: user.first_name || 'there', appName: env.APP_NAME, ip, userAgent: ua, whenISO, location });
+        await sendEmail({ to: user.email, subject, text, html });
+      } catch (e) {
+        console.warn('[security-email] Failed to send password reset alert (public):', e?.message || e);
+      }
+    }
+
+    return res.status(200).json({ status: 'success', message: 'Password reset successfully.' , data: { user: updated } });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // ============ Phone (WhatsApp) OTP via external OTP service ============
 const OTP_BASE_URL = process.env.OTP_BASE_URL || 'https://otp.orincore.com';
 const OTP_API_KEY = process.env.OTP_API_KEY || '';

@@ -13,7 +13,9 @@ import {
   sendPhoneVerification,
   verifyPhoneOtp,
   sendPasswordResetOtp,
-  confirmPasswordResetOtp
+  confirmPasswordResetOtp,
+  sendForgotPasswordEmailOtp,
+  confirmForgotPasswordEmailOtp
 } from '../controllers/auth.controller.js';
 import { uploadSingle } from '../middleware/upload.js';
 
@@ -22,6 +24,9 @@ const router = express.Router();
 // Public routes
 router.post('/signup', signup);
 router.post('/login', login);
+// Forgot password via email (public)
+router.post('/password/forgot/send-otp', sendForgotPasswordEmailOtp);
+router.post('/password/forgot/confirm', confirmForgotPasswordEmailOtp);
 
 // Protected routes - all routes below this middleware require authentication
 router.use(protect);
