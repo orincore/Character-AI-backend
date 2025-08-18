@@ -1,0 +1,176 @@
+import nodemailer from 'nodemailer';
+import env from '../config/env.js';
+
+let transporter;
+
+function getTransporter() {
+  if (!transporter) {
+    transporter = nodemailer.createTransport({
+      host: env.SMTP_HOST,
+      port: Number(env.SMTP_PORT || 587),
+      secure: false,
+      auth: {
+        user: env.SMTP_USER,
+        pass: env.SMTP_PASS,
+      },
+      // Connection pool can improve throughput and stability
+      pool: true,
+      maxConnections: 2,
+      tls: {
+        // Allow STARTTLS; most providers require a valid cert, keep default strictness
+        // rejectUnauthorized: false,
+      },
+    });
+
+    // Best-effort verification to surface auth/config issues early
+    transporter.verify().then(() => {
+      console.log('[mailer] SMTP transporter verified');
+    }).catch((e) => {
+      console.warn('[mailer] SMTP verify failed:', e?.message || e);
+    });
+  }
+  return transporter;
+}
+
+export async function sendEmail({ to, subject, text, html }) {
+  const tx = getTransporter();
+  // Many providers (incl. Brevo) require From to be a verified/sender address
+  // Force default From to SMTP_USER to avoid silent drops
+  const from = env.SMTP_FROM || env.SMTP_USER;
+  if (env.SMTP_FROM && env.SMTP_FROM !== env.SMTP_USER) {
+    console.warn('[mailer] Using custom SMTP_FROM. Ensure this sender is verified in your SMTP provider to avoid spam/drops:', env.SMTP_FROM);
+  }
+
+  const info = await tx.sendMail({
+    from,
+    to,
+    subject,
+    text,
+    html,
+    envelope: {
+      from: env.SMTP_USER,
+      to: Array.isArray(to) ? to : [to],
+    },
+  });
+  return info;
+}
+
+export function buildOtpEmail({ name = 'there', otp, minutes = 10, appName = 'Clyra AI', ctaUrl = '', supportEmail = 'support@orincore.com' }) {
+  const subject = `${appName}: Your verification code`;
+  const text = `Hi ${name},\n\nYour ${appName} verification code is ${otp}. It expires in ${minutes} minutes.\n\nIf you did not request this, you can ignore this email.\n\nSent by Verification Team\n— Orincore Technologies\nAdarsh Suradkar, CEO & Lead Developer`;
+  const ctaHtml = ctaUrl ? `
+    <table align="center" role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 8px;">
+      <tr>
+        <td align="center" bgcolor="#6C5CE7" style="border-radius:12px;">
+          <a href="${ctaUrl}" style="display:inline-block; padding:12px 18px; color:#FFFFFF; font-weight:700; font-family:Segoe UI,Roboto,Arial,sans-serif; text-decoration:none;">Open ${appName}</a>
+        </td>
+      </tr>
+    </table>
+  ` : '';
+  const html = `
+  <!DOCTYPE html>
+  <html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="x-ua-compatible" content="ie=edge" />
+    <title>${appName} • Verification Code</title>
+    <style>
+      /* Client resets */
+      body,table,td,a{ -ms-text-size-adjust:100%; -webkit-text-size-adjust:100%; }
+      table,td{ mso-table-lspace:0pt; mso-table-rspace:0pt; }
+      img{ -ms-interpolation-mode:bicubic; border:0; outline:none; text-decoration:none; }
+      table{ border-collapse:collapse !important; }
+      body{ margin:0 !important; padding:0 !important; width:100% !important; height:100% !important; background-color:#0E0B1F; }
+      a { color: #6C5CE7; text-decoration: none; }
+      /* Mobile */
+      @media screen and (max-width:600px){
+        .container{ width:100% !important; }
+        .px{ padding-left:20px !important; padding-right:20px !important; }
+        .otp-digit{ width:44px !important; height:54px !important; font-size:20px !important; }
+      }
+    </style>
+  </head>
+  <body style="background-color:#0E0B1F;">
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
+      Your ${appName} verification code is ${otp}. Expires in ${minutes} minutes.
+    </div>
+    <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%">
+      <tr>
+        <td align="center" style="padding:32px 12px;">
+          <table class="container" border="0" cellpadding="0" cellspacing="0" role="presentation" width="640" style="width:640px; max-width:640px;">
+            <!-- Card -->
+            <tr>
+              <td style="background:#15122A; border-radius:16px; box-shadow:0 12px 32px rgba(24,16,80,.35);">
+                <!-- Header -->
+                <table width="100%" role="presentation" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td style="background:linear-gradient(135deg,#6C5CE7,#4B43BD); padding:28px 28px; border-top-left-radius:16px;border-top-right-radius:16px;">
+                      <table width="100%" role="presentation">
+                        <tr>
+                          <td align="left" style="font-family:Segoe UI,Roboto,Arial,sans-serif; font-size:22px; font-weight:800; color:#FFFFFF; letter-spacing:.3px;">
+                            ${appName}
+                          </td>
+                          <td align="right" style="font-family:Segoe UI,Roboto,Arial,sans-serif; font-size:12px; color:#F3F2FF;">
+                            Secure Verification
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="height:1px; background:linear-gradient(90deg, rgba(108,92,231,.0), rgba(108,92,231,.45), rgba(108,92,231,.0));"></td>
+                  </tr>
+                </table>
+                <!-- Body -->
+                <table width="100%" role="presentation" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td class="px" style="padding:28px; font-family:Segoe UI,Roboto,Arial,sans-serif;">
+                      <p style="margin:0 0 10px; color:#B8B5D8; font-size:16px;">Hi ${name},</p>
+                      <h2 style="margin:0 0 12px; color:#FFFFFF; font-size:22px; font-weight:800;">Your verification code</h2>
+                      <p style="margin:0 0 20px; color:#D7D4F3; font-size:15px; line-height:1.6;">Use this code to verify your email for ${appName}. For your security, this code expires in <strong>${minutes} minutes</strong>.</p>
+                      <!-- OTP -->
+                      <table align="center" role="presentation" cellpadding="0" cellspacing="0" style="margin:22px auto;">
+                        <tr>
+                          ${otp.split('').map(d => `
+                            <td class="otp-digit" align="center" style="width:52px; height:60px; background:#201C3F; border:1px solid #3A3470; border-radius:12px; box-shadow:0 6px 18px rgba(108,92,231,.25); color:#FFFFFF; font-weight:800; font-size:22px; font-family:Segoe UI,Roboto,Arial,sans-serif; letter-spacing:1px;">
+                              ${d}
+                            </td>
+                            <td style="width:10px; height:1px; font-size:0; line-height:0;">&nbsp;</td>
+                          `).join('')}
+                        </tr>
+                      </table>
+                      <!-- Copy-friendly block -->
+                      <table align="center" role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:460px; margin:0 auto 18px;">
+                        <tr>
+                          <td style="background:#1D1840; border:1px dashed #3C3781; border-radius:10px; padding:12px 16px; color:#E9E7FF; font-family:Consolas, SFMono-Regular, Menlo, Monaco, monospace; font-size:18px; text-align:center; letter-spacing:4px;">
+                            ${otp}
+                          </td>
+                        </tr>
+                      </table>
+                      <p style="margin:6px 0 24px; color:#A9A6C7; font-size:13px; text-align:center;">Didn’t request this? You can safely ignore this email.</p>
+                      ${ctaHtml}
+                      <p style="margin:10px 0 0; color:#9A97BB; font-size:12px; text-align:center;">Need help? Contact <a href="mailto:${supportEmail}" style="color:#A89BFF; text-decoration:underline;">${supportEmail}</a></p>
+                    </td>
+                  </tr>
+                </table>
+                <!-- Footer -->
+                <table width="100%" role="presentation" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td style="padding:18px 28px 26px; border-top:1px solid rgba(255,255,255,.06); font-family:Segoe UI,Roboto,Arial,sans-serif; color:#A8A5C9; font-size:12px;">
+                      <div style="margin:0 0 4px;">&copy; ${new Date().getFullYear()} ${appName}. All rights reserved.</div>
+                      <div style="margin:0 0 2px; color:#C9C6E6;">Sent by Verification Team</div>
+                      <div style="color:#8F8BB5;">By Orincore Technologies — Adarsh Suradkar, CEO & Lead Developer</div>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+  </html>`;
+  return { subject, text, html };
+}

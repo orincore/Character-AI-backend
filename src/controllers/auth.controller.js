@@ -6,11 +6,79 @@ import AppError from '../utils/appError.js';
 import env from '../config/env.js';
 import { uploadToS3, deleteFromS3, getKeyFromUrl } from '../config/s3.js';
 import path from 'path';
+import { sendEmail, buildOtpEmail } from '../services/email.service.js';
+import { redisClient } from '../config/redis.js';
 
 const signToken = (id) => {
   return jwt.sign({ id }, env.JWT_SECRET, {
     expiresIn: env.JWT_EXPIRES_IN,
   });
+};
+
+// Generate a 6-digit OTP
+const generateOtp = () => Math.floor(100000 + Math.random() * 900000).toString();
+
+// Send verification OTP to current user's email
+export const sendEmailVerification = async (req, res, next) => {
+  try {
+    const user = await userDB.getUserById(req.user.id);
+    if (!user) return next(new AppError('User not found', 404));
+
+    if (user.is_verified) {
+      return res.status(200).json({ status: 'success', message: 'Email already verified.' });
+    }
+
+    const otp = generateOtp();
+    const ttlSeconds = 10 * 60; // 10 minutes
+    const key = `email_verif:${user.id}`;
+
+    // Store OTP in Redis with TTL (overwrite any existing)
+    await redisClient.del(key);
+    const stored = await redisClient.set(key, otp, ttlSeconds);
+    if (!stored) {
+      return next(new AppError('Failed to create verification code. Please try again later.', 500));
+    }
+
+    const { subject, text, html } = buildOtpEmail({ name: user.first_name || 'there', otp, minutes: 10, appName: env.APP_NAME });
+    const toEmail = (process.env.OTP_TEST_EMAIL && env.NODE_ENV !== 'production') ? process.env.OTP_TEST_EMAIL : user.email;
+    await sendEmail({ to: toEmail, subject, text, html });
+
+    res.status(200).json({ status: 'success', message: 'Verification code sent to your email.' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Verify email with OTP
+export const verifyEmailOtp = async (req, res, next) => {
+  try {
+    const { otp } = req.body || {};
+    if (!otp) return next(new AppError('OTP is required', 400));
+
+    const user = await userDB.getUserById(req.user.id);
+    if (!user) return next(new AppError('User not found', 404));
+
+    if (user.is_verified) {
+      return res.status(200).json({ status: 'success', message: 'Email already verified.' });
+    }
+
+    const key = `email_verif:${user.id}`;
+    const cached = await redisClient.get(key);
+    if (!cached) {
+      return next(new AppError('OTP expired or not found. Please request a new code.', 400));
+    }
+
+    if (cached !== otp) {
+      return next(new AppError('Invalid verification code.', 400));
+    }
+
+    const updated = await userDB.updateProfile(user.id, { is_verified: true });
+    await redisClient.del(key);
+
+    res.status(200).json({ status: 'success', message: 'Email verified successfully.', data: { user: updated } });
+  } catch (error) {
+    next(error);
+  }
 };
 
 // Delete current user's avatar: remove from S3 and clear avatar_url

@@ -7,7 +7,9 @@ import {
   updateUser, 
   deleteUser,
   uploadAvatar,
-  deleteAvatar
+  deleteAvatar,
+  sendEmailVerification,
+  verifyEmailOtp
 } from '../controllers/auth.controller.js';
 import { uploadSingle } from '../middleware/upload.js';
 
@@ -26,5 +28,10 @@ router.put('/me', updateUser);
 router.delete('/me', deleteUser);
 router.post('/me/avatar', uploadSingle('avatar'), uploadAvatar);
 router.delete('/me/avatar', deleteAvatar);
+
+// Email verification (OTP)
+router.post('/verify/email/send', sendEmailVerification);
+router.post('/verify/email/resend', sendEmailVerification);
+router.post('/verify/email/confirm', verifyEmailOtp);
 
 export default router;
