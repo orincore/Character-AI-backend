@@ -277,6 +277,23 @@ export const updateUser = async (req, res, next) => {
 // Delete user account
 export const deleteUser = async (req, res, next) => {
   try {
+    // Require password confirmation in payload
+    const { password } = req.body || {};
+    if (!password) {
+      return next(new AppError('Password is required to close the account.', 400));
+    }
+
+    // Fetch latest user to check password
+    const user = await userDB.getUserById(req.user.id);
+    if (!user || !user.password) {
+      return next(new AppError('User not found', 404));
+    }
+
+    const isPasswordCorrect = await bcrypt.compare(password, user.password);
+    if (!isPasswordCorrect) {
+      return next(new AppError('Incorrect password', 401));
+    }
+
     // Soft delete: deactivate the user instead of deleting their data
     const updated = await userDB.updateProfile(req.user.id, { is_active: false });
 
