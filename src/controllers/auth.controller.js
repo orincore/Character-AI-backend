@@ -9,12 +9,25 @@ import { uploadToS3, deleteFromS3, getKeyFromUrl } from '../config/s3.js';
 import path from 'path';
 import { sendEmail, buildOtpEmail, buildWelcomeEmail, buildSecurityAlertEmail } from '../services/email.service.js';
 import { redisClient } from '../config/redis.js';
+import { supabaseAdmin } from '../config/supabaseClient.js';
 
 const signToken = (id) => {
   return jwt.sign({ id }, env.JWT_SECRET, {
     expiresIn: env.JWT_EXPIRES_IN,
   });
 };
+
+// Lightweight readiness check for WhatsApp/OTP gateway
+async function isWhatsappGatewayReady() {
+  try {
+    if (!OTP_BASE_URL) return true; // assume ready if not configured to avoid blocking
+    const url = `${OTP_BASE_URL}/health`;
+    const { data } = await axios.get(url, { timeout: 3000, headers: OTP_API_KEY ? { 'x-api-key': OTP_API_KEY } : {} });
+    return !!(data && (data.ok || data.status === 'ok' || data.healthy === true));
+  } catch (_) {
+    return false;
+  }
+}
 
 // Step 1 (WhatsApp): user submits their phone to receive an OTP (public)
 export const sendForgotPasswordWhatsappOtp = async (req, res, next) => {
@@ -35,10 +48,45 @@ export const sendForgotPasswordWhatsappOtp = async (req, res, next) => {
       const { data } = await axios.post(`${OTP_BASE_URL}/api/otp/send`, payload, { timeout: 8000, headers: { 'x-api-key': OTP_API_KEY } });
       if (data?.success && data?.uuid) {
         const ttl = (typeof data.expiresIn === 'number' && data.expiresIn > 0) ? data.expiresIn : 300;
+        // Try to resolve user now and store userId to avoid format mismatches later
+        const variants = (() => {
+          const raw = String(contactNumber).trim();
+          const digits = raw.replace(/[^0-9]/g, '');
+          const set = new Set([raw]);
+          if (raw.startsWith('+')) set.add(raw.slice(1));
+          if (digits.length === 10) set.add(`+91${digits}`);
+          if (raw.startsWith('0') && digits.length >= 10) set.add(`+91${digits.replace(/^0+/, '')}`);
+          set.add(digits);
+          return Array.from(set).filter(Boolean);
+        })();
+
+        let resolvedUser = null;
+        for (const v of variants) {
+          try {
+            resolvedUser = await userDB.findUserByIdentifier(v);
+            if (resolvedUser) break;
+          } catch (_) { /* continue */ }
+        }
+        if (!resolvedUser) {
+          const digits = String(contactNumber).replace(/[^0-9]/g, '');
+          const last10 = digits.slice(-10);
+          const last7 = digits.slice(-7);
+          if (last10) {
+            const { data: candidates } = await supabaseAdmin
+              .from('user_profiles')
+              .select('id, phone_number, email')
+              .or(`phone_number.ilike.%${last10},phone_number.ilike.%${last7}`)
+              .limit(1);
+            if (Array.isArray(candidates) && candidates.length > 0) {
+              resolvedUser = candidates[0];
+            }
+          }
+        }
+
         // Store session by phone for public flow
         const key = `pwd_whatsapp_public_phone:${contactNumber}`;
         await redisClient.del(key);
-        const value = JSON.stringify({ uuid: data.uuid, contactNumber, reason: 'Password reset' });
+        const value = JSON.stringify({ uuid: data.uuid, contactNumber, reason: 'Password reset', userId: resolvedUser?.id || null });
         await redisClient.set(key, value, ttl);
       }
     } catch (e) {
@@ -61,32 +109,120 @@ export const confirmForgotPasswordWhatsappOtp = async (req, res, next) => {
       return next(new AppError('newPassword must be at least 8 characters long', 400));
     }
 
-    const user = await userDB.findUserByIdentifier(contactNumber);
-    if (!user) return next(new AppError('Invalid contact or code.', 400));
+    // First validate OTP session so we can provide precise error if code is wrong/expired
+    const buildVariants = () => {
+      const raw = String(contactNumber).trim();
+      const digits = raw.replace(/[^0-9]/g, '');
+      const set = new Set([raw]);
+      if (raw.startsWith('+')) set.add(raw.slice(1));
+      if (digits.length === 10) set.add(`+91${digits}`);
+      if (raw.startsWith('0') && digits.length >= 10) set.add(`+91${digits.replace(/^0+/, '')}`);
+      set.add(digits);
+      return Array.from(set).filter(Boolean);
+    };
 
-    // Prefer phone-keyed session; fall back to legacy user-keyed session
-    const phoneKey = `pwd_whatsapp_public_phone:${contactNumber}`;
-    const userKey = `pwd_whatsapp_public:${user.id}`;
-    let cachedRaw = await redisClient.get(phoneKey);
-    if (!cachedRaw) {
-      cachedRaw = await redisClient.get(userKey);
+    // Try to fetch OTP session using several phone variants
+    const variantsForKeys = buildVariants();
+    let phoneKeyUsed = null;
+    let cachedRaw = null;
+    for (const v of variantsForKeys) {
+      const k = `pwd_whatsapp_public_phone:${v}`;
+      // eslint-disable-next-line no-await-in-loop
+      const val = await redisClient.get(k);
+      if (val) {
+        phoneKeyUsed = k;
+        cachedRaw = val;
+        break;
+      }
     }
-    if (!cachedRaw) return next(new AppError('OTP session expired or not found. Please request a new code.', 400));
-    const cached = JSON.parse(cachedRaw);
-    const finalUuid = uuid || cached.uuid;
-    if (!finalUuid) return next(new AppError('Invalid verification session. Please resend OTP.', 400));
+    // Legacy fallback key requires user id; we'll try it after finding user
+    const cachedPhone = cachedRaw ? JSON.parse(cachedRaw) : null;
+    const candidateUuid = uuid || cachedPhone?.uuid;
+    if (!candidateUuid) {
+      // We don't yet know userId; try to find it to check legacy key
+      // Continue; after user lookup we'll retry reading the legacy key
+    }
 
-    // Verify via external OTP service
-    const verifyUrl = `${OTP_BASE_URL}/api/otp/verify`;
-    const { data } = await axios.get(verifyUrl, { params: { uuid: finalUuid, contactNumber, otp }, timeout: 8000, headers: { 'x-api-key': OTP_API_KEY } });
-    if (!data?.success) return next(new AppError('Invalid or expired OTP.', 400));
+    let otpVerified = false;
+    if (candidateUuid) {
+      try {
+        const verifyUrl = `${OTP_BASE_URL}/api/otp/verify`;
+        const { data } = await axios.get(verifyUrl, { params: { uuid: candidateUuid, contactNumber, otp }, timeout: 8000, headers: { 'x-api-key': OTP_API_KEY } });
+        otpVerified = !!data?.success;
+      } catch (_) { otpVerified = false; }
+    }
+
+    // If session contains a userId, prefer that
+    let user = null;
+    if (cachedPhone?.userId) {
+      try {
+        user = await userDB.getUserById(cachedPhone.userId);
+      } catch (_) { user = null; }
+    }
+
+    // Now find the user by multiple phone variants to avoid formatting issues
+    const variants = (() => {
+      const raw = String(contactNumber).trim();
+      const digits = raw.replace(/[^0-9]/g, '');
+      const list = new Set([raw]);
+      if (raw.startsWith('+')) list.add(raw.slice(1));
+      if (digits.length === 10) list.add(`+91${digits}`);
+      if (raw.startsWith('0') && digits.length >= 10) list.add(`+91${digits.replace(/^0+/, '')}`);
+      list.add(digits);
+      return Array.from(list).filter(Boolean);
+    })();
+
+    for (const v of variants) {
+      try {
+        if (!user) {
+          user = await userDB.findUserByIdentifier(v);
+        }
+        if (user) break;
+      } catch (_) { /* continue */ }
+    }
+
+    // If not found, try suffix match on last 7-10 digits
+    if (!user) {
+      const digits = String(contactNumber).replace(/[^0-9]/g, '');
+      const last10 = digits.slice(-10);
+      const last7 = digits.slice(-7);
+      if (last10) {
+        const { data: candidates } = await supabaseAdmin
+          .from('user_profiles')
+          .select('*')
+          .or(`phone_number.ilike.%${last10},phone_number.ilike.%${last7}`)
+          .limit(1);
+        if (Array.isArray(candidates) && candidates.length > 0) {
+          user = candidates[0];
+        }
+      }
+    }
+
+    // If OTP wasn't verified earlier and we have a legacy user-keyed session, retry verification now
+    if (!otpVerified && user) {
+      const userKey = `pwd_whatsapp_public:${user.id}`;
+      const legacyRaw = await redisClient.get(userKey);
+      if (legacyRaw) {
+        const legacy = JSON.parse(legacyRaw);
+        const finalUuid = uuid || legacy.uuid;
+        if (finalUuid) {
+          const verifyUrl = `${OTP_BASE_URL}/api/otp/verify`;
+          const { data } = await axios.get(verifyUrl, { params: { uuid: finalUuid, contactNumber, otp }, timeout: 8000, headers: { 'x-api-key': OTP_API_KEY } });
+          otpVerified = !!data?.success;
+        }
+      }
+    }
+
+    if (!otpVerified) return next(new AppError('Invalid or expired OTP.', 400));
+    if (!user) return next(new AppError('Invalid contact or code.', 400));
 
     // Update password
     const salt = await bcrypt.genSalt(12);
     const hash = await bcrypt.hash(String(newPassword), salt);
     const updated = await userDB.updateProfile(user.id, { password: hash, password_changed_at: new Date() });
+    const userKey = `pwd_whatsapp_public:${user.id}`;
     await Promise.all([
-      redisClient.del(phoneKey),
+      redisClient.del(phoneKeyUsed || `pwd_whatsapp_public_phone:${contactNumber}`),
       redisClient.del(userKey)
     ]);
 
