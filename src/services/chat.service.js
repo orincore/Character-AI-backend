@@ -246,6 +246,27 @@ export async function sendMessage(sessionId, userId, message) {
     const resp = await chatCompletion(messages);
     const aiResponse = resp?.choices?.[0]?.message?.content?.trim() || '';
 
+    // Helper: find mirror session linked via system MIRROR_LINK
+    async function getMirrorSessionId(primaryId) {
+      try {
+        const { data: sys } = await supabase
+          .from('chat_messages')
+          .select('content')
+          .eq('session_id', primaryId)
+          .eq('role', 'system')
+          .ilike('content', 'MIRROR_LINK:%')
+          .limit(1);
+        const content = Array.isArray(sys) && sys[0]?.content;
+        if (!content || typeof content !== 'string') return null;
+        const m = content.match(/^MIRROR_LINK:([0-9a-fA-F-]{36})$/);
+        return m ? m[1] : null;
+      } catch {
+        return null;
+      }
+    }
+
+    const mirrorSessionId = await getMirrorSessionId(sessionId);
+
     // 4) Persist both user and assistant messages to Supabase
     let savedUser = false;
     let savedAssistant = false;
@@ -257,6 +278,28 @@ export async function sendMessage(sessionId, userId, message) {
         console.error('Failed to save user message:', { sessionId, userId, error: userErr, contentLen: userText.length });
       } else {
         savedUser = true;
+        // Mirror to linked session (best-effort)
+        if (mirrorSessionId) {
+          try {
+            // compute order_index for mirror session
+            let mirrorUserIndex = null;
+            try {
+              const { data: ordRowsM } = await supabase
+                .from('chat_messages')
+                .select('order_index')
+                .eq('session_id', mirrorSessionId)
+                .order('order_index', { ascending: false, nullsFirst: false })
+                .limit(1);
+              const baseM = Number(ordRowsM?.[0]?.order_index ?? 0);
+              mirrorUserIndex = baseM + 1;
+            } catch {}
+            await supabase
+              .from('chat_messages')
+              .insert([{ session_id: mirrorSessionId, role: 'user', content: userText, is_nsfw: turnNSFW, order_index: mirrorUserIndex, metadata: { mirrored_from: sessionId } }]);
+          } catch (e) {
+            console.warn('Failed to mirror user message', { sessionId, mirrorSessionId, error: e?.message || e });
+          }
+        }
       }
     }
 
@@ -268,6 +311,28 @@ export async function sendMessage(sessionId, userId, message) {
         console.error('Failed to save assistant message:', { sessionId, userId, error: aiErr, contentLen: aiResponse.length });
       } else {
         savedAssistant = true;
+        // Mirror to linked session (best-effort)
+        if (mirrorSessionId) {
+          try {
+            // compute order_index for mirror session
+            let mirrorAssistantIndex = null;
+            try {
+              const { data: ordRowsM2 } = await supabase
+                .from('chat_messages')
+                .select('order_index')
+                .eq('session_id', mirrorSessionId)
+                .order('order_index', { ascending: false, nullsFirst: false })
+                .limit(1);
+              const baseM2 = Number(ordRowsM2?.[0]?.order_index ?? 0);
+              mirrorAssistantIndex = baseM2 + 1;
+            } catch {}
+            await supabase
+              .from('chat_messages')
+              .insert([{ session_id: mirrorSessionId, role: 'assistant', content: aiResponse, is_nsfw: turnNSFW, order_index: mirrorAssistantIndex, metadata: { mirrored_from: sessionId } }]);
+          } catch (e) {
+            console.warn('Failed to mirror assistant message', { sessionId, mirrorSessionId, error: e?.message || e });
+          }
+        }
       }
     }
 
@@ -277,6 +342,16 @@ export async function sendMessage(sessionId, userId, message) {
       .update({ updated_at: new Date().toISOString() })
       .eq('id', sessionId)
       .eq('user_id', userId);
+
+    // Touch mirror session as well
+    if (mirrorSessionId) {
+      try {
+        await supabase
+          .from('chat_sessions')
+          .update({ updated_at: new Date().toISOString() })
+          .eq('id', mirrorSessionId);
+      } catch {}
+    }
 
     // 8) Return the AI response and updated session info
     return {
