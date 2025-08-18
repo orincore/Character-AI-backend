@@ -44,7 +44,9 @@ export const createSession = async (req, res, next) => {
     }
 
     // Create session for requesting user only (no mirroring)
-    const session = await chatService.createSession(userId, characterId, title);
+    const created = await chatService.createSession(userId, characterId, title);
+    // Enrich with character details for response
+    const session = await chatService.getSession(created.id, userId);
     
     res.status(201).json({
       status: 'success',
@@ -84,7 +86,8 @@ export const createPublicCharacterSession = async (req, res, next) => {
       throw new AppError('Only public characters are allowed for this endpoint', 403);
     }
 
-    const session = await chatService.createSession(userId, characterId, title);
+    const created = await chatService.createSession(userId, characterId, title);
+    const session = await chatService.getSession(created.id, userId);
 
     res.status(201).json({
       status: 'success',

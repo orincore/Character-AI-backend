@@ -14,7 +14,7 @@ const supabase = createClient(
   }
 );
 
-const supabaseAdmin = createClient(
+export const supabaseAdmin = createClient(
   env.SUPABASE_URL,
   env.SUPABASE_SERVICE_ROLE_KEY,
   {

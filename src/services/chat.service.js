@@ -1,5 +1,5 @@
 import { chatCompletion } from '../config/together.js';
-import supabase from '../config/supabaseClient.js';
+import supabase, { supabaseAdmin } from '../config/supabaseClient.js';
 import { buildMessagesForSession } from './messageBuilder.js';
 
 // Removed system prompt builder to send only raw user messages to the model
@@ -187,22 +187,27 @@ export async function createSession(userId, characterId, title = 'New Chat') {
  * Gets a chat session by ID with complete character details
  */
 export async function getSession(sessionId, userId) {
+  // Fetch the session owned by the user
   const { data: session, error } = await supabase
     .from('chat_sessions')
-    .select(`
-      *,
-      characters (*)
-    `)
+    .select('*')
     .eq('id', sessionId)
     .eq('user_id', userId)
     .single();
 
-  if (error) {
+  if (error || !session) {
     console.error('Error fetching session:', error);
     throw new Error('Session not found or access denied');
   }
 
-  return session;
+  // Enrich with character using admin client to bypass RLS
+  const { data: character } = await supabaseAdmin
+    .from('characters')
+    .select('*')
+    .eq('id', session.character_id)
+    .single();
+
+  return { ...session, characters: character || null };
 }
 
 /**
@@ -360,12 +365,10 @@ export async function getSessionMessages(sessionId, userId, { limit = 50, offset
  * Lists all chat sessions for a user
  */
 export async function listUserSessions(userId, limit = 50) {
+  // Fetch sessions only
   const { data: sessions, error } = await supabase
     .from('chat_sessions')
-    .select(`
-      *,
-      characters (id, name, avatar_url)
-    `)
+    .select('*')
     .eq('user_id', userId)
     .order('updated_at', { ascending: false })
     .limit(limit);
@@ -375,8 +378,21 @@ export async function listUserSessions(userId, limit = 50) {
     throw new Error('Failed to fetch chat sessions');
   }
 
-  // Attach last_message for each session
-  const withLast = await Promise.all((sessions || []).map(async (s) => {
+  const list = Array.isArray(sessions) ? sessions : [];
+  const charIds = Array.from(new Set(list.map(s => s.character_id).filter(Boolean)));
+
+  // Fetch characters via admin to avoid RLS issues
+  let charsById = {};
+  if (charIds.length > 0) {
+    const { data: chars } = await supabaseAdmin
+      .from('characters')
+      .select('id, name, avatar_url')
+      .in('id', charIds);
+    (chars || []).forEach(c => { charsById[c.id] = c; });
+  }
+
+  // Attach character and last_message for each session
+  const withLast = await Promise.all(list.map(async (s) => {
     try {
       const { data: msgs } = await supabase
         .from('chat_messages')
@@ -399,10 +415,12 @@ export async function listUserSessions(userId, limit = 50) {
         metadata: m.metadata || {}
       } : null;
       const last_activity_at = last_message?.created_at || (s.updated_at ? new Date(s.updated_at).toISOString() : null);
-      return { ...s, last_message, last_activity_at };
+      const char = charsById[s.character_id] || null;
+      return { ...s, characters: char, last_message, last_activity_at };
     } catch {
       const last_activity_at = s.updated_at ? new Date(s.updated_at).toISOString() : null;
-      return { ...s, last_message: null, last_activity_at };
+      const char = charsById[s.character_id] || null;
+      return { ...s, characters: char, last_message: null, last_activity_at };
     }
   }));
 
