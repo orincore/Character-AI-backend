@@ -207,7 +207,7 @@ export async function getSession(sessionId, userId) {
     .eq('id', session.character_id)
     .single();
 
-  return { ...session, characters: character || null };
+  return { ...session, characters: character || null, character: character || null };
 }
 
 /**
@@ -416,11 +416,11 @@ export async function listUserSessions(userId, limit = 50) {
       } : null;
       const last_activity_at = last_message?.created_at || (s.updated_at ? new Date(s.updated_at).toISOString() : null);
       const char = charsById[s.character_id] || null;
-      return { ...s, characters: char, last_message, last_activity_at };
+      return { ...s, characters: char, character: char, last_message, last_activity_at };
     } catch {
       const last_activity_at = s.updated_at ? new Date(s.updated_at).toISOString() : null;
       const char = charsById[s.character_id] || null;
-      return { ...s, characters: char, last_message: null, last_activity_at };
+      return { ...s, characters: char, character: char, last_message: null, last_activity_at };
     }
   }));
 
