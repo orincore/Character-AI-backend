@@ -41,17 +41,32 @@ export async function sendEmail({ to, subject, text, html }) {
     console.warn('[mailer] Using custom SMTP_FROM. Ensure this sender is verified in your SMTP provider to avoid spam/drops:', env.SMTP_FROM);
   }
 
+  const toList = Array.isArray(to) ? to : [to];
+  console.log('[mailer] Preparing to send email', {
+    to: toList,
+    subject
+  });
+
   const info = await tx.sendMail({
     from,
-    to,
+    to: toList,
     subject,
     text,
     html,
     envelope: {
       from: env.SMTP_USER,
-      to: Array.isArray(to) ? to : [to],
+      to: toList,
     },
   });
+  try {
+    console.log('Email sent! MessageId:', info?.messageId || '(unknown)');
+    if (info?.accepted?.length) {
+      console.log('Accepted:', info.accepted.join(', '));
+    }
+    if (info?.response) {
+      console.log('SMTP response:', info.response);
+    }
+  } catch (_) {}
   return info;
 }
 
