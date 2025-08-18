@@ -7,7 +7,12 @@ import {
   deleteCharacter, 
   listCharacters,
   uploadAvatar,
-  generateCharacterAvatar
+  generateCharacterAvatar,
+  likeCharacter,
+  unlikeCharacter,
+  shareCharacter,
+  useCharacter,
+  getPopularFeed
 } from '../controllers/character.controller.js';
 import { protect } from '../middleware/auth.middleware.js';
 
@@ -31,6 +36,9 @@ const upload = multer({
 // Apply protect middleware to all routes
 router.use(protect);
 
+// Popular feed
+router.get('/feed/popular', getPopularFeed);
+
 // Character CRUD routes
 router.route('/')
   .post(createCharacter)
@@ -44,5 +52,11 @@ router.route('/:id')
 // Upload character avatar
 router.post('/:id/avatar', upload.single('avatar'), uploadAvatar);
 router.post('/:id/avatar/generate', generateCharacterAvatar);
+
+// Popularity interactions
+router.post('/:id/like', likeCharacter);
+router.delete('/:id/like', unlikeCharacter);
+router.post('/:id/share', shareCharacter);
+router.post('/:id/use', useCharacter);
 
 export default router;

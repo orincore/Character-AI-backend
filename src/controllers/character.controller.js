@@ -12,7 +12,6 @@ function getGenderInfo(gender) {
   switch (g) {
     case 'female':
       return { emoji: '💜', pronouns: { subject: 'she', object: 'her', possessive: 'her' } };
-
     case 'male':
       return { emoji: '💙', pronouns: { subject: 'he', object: 'him', possessive: 'his' } };
     case 'nonbinary':
@@ -23,6 +22,168 @@ function getGenderInfo(gender) {
       return { emoji: '😊', pronouns: { subject: 'they', object: 'them', possessive: 'their' } };
   }
 }
+
+// Like a character (idempotent)
+export const likeCharacter = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    // Ensure character exists and is accessible (public or owner)
+    await checkCharacterAccess(id, req.user.id, false);
+
+    // Insert like if not exists
+    const { error: likeErr } = await supabase
+      .from('character_likes')
+      .insert({ character_id: id, user_id: req.user.id })
+      .select()
+      .single();
+
+    if (likeErr && !String(likeErr?.message || '').includes('duplicate')) {
+      // If it's not a duplicate primary key error, propagate
+      throw likeErr;
+    }
+
+    // Recalculate likes_count from character_likes to avoid race conditions
+    const { count } = await supabase
+      .from('character_likes')
+      .select('*', { count: 'exact', head: true })
+      .eq('character_id', id);
+
+    await supabase
+      .from('characters')
+      .update({ likes_count: count || 0, updated_at: new Date().toISOString() })
+      .eq('id', id);
+
+    await recomputePopularityScore(id);
+
+    res.status(200).json({ status: 'success', message: 'Liked' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Unlike a character (idempotent)
+export const unlikeCharacter = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    await checkCharacterAccess(id, req.user.id, false);
+
+    await supabase
+      .from('character_likes')
+      .delete()
+      .eq('character_id', id)
+      .eq('user_id', req.user.id);
+
+    const { count } = await supabase
+      .from('character_likes')
+      .select('*', { count: 'exact', head: true })
+      .eq('character_id', id);
+
+    await supabase
+      .from('characters')
+      .update({ likes_count: count || 0, updated_at: new Date().toISOString() })
+      .eq('id', id);
+
+    await recomputePopularityScore(id);
+
+    res.status(200).json({ status: 'success', message: 'Unliked' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Register a share event and increment counter
+export const shareCharacter = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    // Public feed counts shares on public characters; still allow for shareable or owner
+    await checkCharacterAccess(id, req.user.id, false);
+
+    await supabase
+      .from('character_share_events')
+      .insert({ character_id: id, user_id: req.user.id });
+
+    // Update counter from events
+    const { count } = await supabase
+      .from('character_share_events')
+      .select('*', { count: 'exact', head: true })
+      .eq('character_id', id);
+
+    await supabase
+      .from('characters')
+      .update({ shares_count: count || 0, updated_at: new Date().toISOString() })
+      .eq('id', id);
+
+    await recomputePopularityScore(id);
+
+    res.status(200).json({ status: 'success', message: 'Share recorded' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Register a use event and increment counter
+export const useCharacter = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    await checkCharacterAccess(id, req.user.id, false);
+
+    await supabase
+      .from('character_use_events')
+      .insert({ character_id: id, user_id: req.user.id });
+
+    const { count } = await supabase
+      .from('character_use_events')
+      .select('*', { count: 'exact', head: true })
+      .eq('character_id', id);
+
+    await supabase
+      .from('characters')
+      .update({ uses_count: count || 0, updated_at: new Date().toISOString() })
+      .eq('id', id);
+
+    await recomputePopularityScore(id);
+
+    res.status(200).json({ status: 'success', message: 'Use recorded' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Public feed of popular characters
+export const getPopularFeed = async (req, res, next) => {
+  try {
+    const page = parseInt(req.query.page || '1', 10);
+    const limit = Math.min(50, parseInt(req.query.limit || '12', 10));
+    const offset = (page - 1) * limit;
+
+    const { data: items, error, count } = await supabase
+      .from('characters')
+      .select('*', { count: 'exact' })
+      .eq('visibility', 'public')
+      .order('popularity_score', { ascending: false })
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) throw error;
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        items: items.map(c => formatCharacterResponse(c, req.user.id)),
+        pagination: {
+          total: count || 0,
+          page,
+          limit,
+          total_pages: Math.ceil((count || 0) / limit),
+          hasMore: offset + (items?.length || 0) < (count || 0)
+        }
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 
 // Format character response with personality traits and metadata
 const formatCharacterResponse = (character, userId) => {
@@ -70,6 +231,38 @@ const checkCharacterAccess = async (characterId, userId, requireOwner = false) =
 
   return { isOwner, character };
 };
+
+// Compute a weighted popularity score with simple freshness decay
+async function recomputePopularityScore(characterId) {
+  // Fetch needed fields
+  const { data: c } = await supabase
+    .from('characters')
+    .select('id, likes_count, shares_count, uses_count, created_at')
+    .eq('id', characterId)
+    .single();
+  if (!c) return;
+
+  const likes = Number(c.likes_count || 0);
+  const shares = Number(c.shares_count || 0);
+  const uses = Number(c.uses_count || 0);
+  const createdAt = new Date(c.created_at);
+  const ageHours = Math.max(0, (Date.now() - createdAt.getTime()) / 36e5);
+
+  // Tunable weights
+  const W_LIKE = 3.0;
+  const W_SHARE = 5.0;
+  const W_USE = 1.0;
+
+  // Freshness bonus decays over ~72h
+  const freshness = 25 / (1 + ageHours / 72);
+
+  const score = W_LIKE * likes + W_SHARE * shares + W_USE * uses + freshness;
+
+  await supabase
+    .from('characters')
+    .update({ popularity_score: score, updated_at: new Date().toISOString() })
+    .eq('id', characterId);
+}
 
 
 // Create a new character
