@@ -17,17 +17,7 @@ const signToken = (id) => {
   });
 };
 
-// Lightweight readiness check for WhatsApp/OTP gateway
-async function isWhatsappGatewayReady() {
-  try {
-    if (!OTP_BASE_URL) return true; // assume ready if not configured to avoid blocking
-    const url = `${OTP_BASE_URL}/health`;
-    const { data } = await axios.get(url, { timeout: 3000, headers: OTP_API_KEY ? { 'x-api-key': OTP_API_KEY } : {} });
-    return !!(data && (data.ok || data.status === 'ok' || data.healthy === true));
-  } catch (_) {
-    return false;
-  }
-}
+// isWhatsappGatewayReady is defined below near OTP helpers
 
 // Step 1 (WhatsApp): user submits their phone to receive an OTP (public)
 export const sendForgotPasswordWhatsappOtp = async (req, res, next) => {
