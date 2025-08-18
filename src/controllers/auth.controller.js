@@ -166,11 +166,19 @@ export const signup = async (req, res, next) => {
       return next(new AppError(error.message || 'Error creating user', 500));
     }
 
-    // 4) Generate JWT and send response
+    // 4) Ensure user starts unverified until OTP confirmation
+    try {
+      await userDB.updateProfile(user.id, { is_verified: false });
+    } catch (e) {
+      console.warn('[signup] Failed to set is_verified=false:', e?.message || e);
+    }
+
+    // 5) Fetch latest profile and respond
+    const latest = await userDB.getUserById(user.id);
     createSendToken({
       id: user.id,
       email: user.email,
-      ...profile
+      ...latest
     }, 201, res);
   } catch (error) {
     next(error);
