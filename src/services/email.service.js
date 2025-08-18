@@ -70,7 +70,7 @@ export async function sendEmail({ to, subject, text, html }) {
   return info;
 }
 
-export function buildOtpEmail({ name = 'there', otp, minutes = 10, appName = 'Clyra AI', ctaUrl = '', supportEmail = 'support@orincore.com' }) {
+export function buildOtpEmail({ name = 'there', otp, minutes = 10, appName = 'Clyra AI', ctaUrl = '', supportEmail = 'contact@orincore.com' }) {
   const subject = `${appName}: Your verification code`;
   const text = `Hi ${name},\n\nYour ${appName} verification code is ${otp}. It expires in ${minutes} minutes.\n\nIf you did not request this, you can ignore this email.\n\nSent by Verification Team\n— Orincore Technologies\nAdarsh Suradkar, CEO & Lead Developer`;
   const ctaHtml = ctaUrl ? `
@@ -198,11 +198,13 @@ export function buildSecurityAlertEmail({
   userAgent = '',
   whenISO = new Date().toISOString(),
   location = '',
-  supportEmail = 'support@orincore.com'
+  supportEmail = 'contact@orincore.com'
 }) {
   const action = type === 'password_reset' ? 'Password Reset' : 'New Login';
   const subject = `${appName}: ${action} Alert`;
   const text = `Hi ${name},\n\nWe noticed a ${action.toLowerCase()} on your account.\n\nTime: ${whenISO}\nIP: ${ip}\nLocation: ${location || 'Unknown'}\nDevice: ${userAgent || 'Unknown'}\n\nIf this was you, no action is needed. If you don't recognize this activity, please reset your password immediately or contact support at ${supportEmail}.\n\n— The ${appName} Security Team`;
+  const manageUrl = env.APP_URL ? `${env.APP_URL.replace(/\/$/, '')}/settings/security` : '';
+  const badgeColor = type === 'password_reset' ? '#E67E22' : '#20C997';
   const html = `
   <!DOCTYPE html>
   <html lang="en">
@@ -234,7 +236,9 @@ export function buildSecurityAlertEmail({
                       <table width="100%" role="presentation">
                         <tr>
                           <td align="left" style="font-family:Segoe UI,Roboto,Arial,sans-serif; font-size:22px; font-weight:800; color:#FFFFFF; letter-spacing:.3px;">${appName}</td>
-                          <td align="right" style="font-family:Segoe UI,Roboto,Arial,sans-serif; font-size:12px; color:#F3F2FF;">Security Alert</td>
+                          <td align="right" style="font-family:Segoe UI,Roboto,Arial,sans-serif; font-size:12px; color:#F3F2FF;">
+                            <span style="display:inline-block; padding:6px 10px; background:${badgeColor}; color:#0E0B1F; border-radius:999px; font-weight:800; letter-spacing:.3px;">${action}</span>
+                          </td>
                         </tr>
                       </table>
                     </td>
@@ -246,12 +250,32 @@ export function buildSecurityAlertEmail({
                     <td class="px" style="padding:28px; font-family:Segoe UI,Roboto,Arial,sans-serif;">
                       <p style="margin:0 0 10px; color:#B8B5D8; font-size:16px;">Hi ${name},</p>
                       <h2 style="margin:0 0 12px; color:#FFFFFF; font-size:22px; font-weight:800;">${action} on your account</h2>
-                      <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; max-width:520px; background:#1D1840; border:1px solid #3C3781; border-radius:12px; padding:12px 16px; color:#E9E7FF; font-family:Segoe UI,Roboto,Arial,sans-serif; font-size:14px;">
-                        <tr><td style="padding:6px 4px;">Time</td><td style="padding:6px 4px;" align="right"><strong>${whenISO}</strong></td></tr>
-                        <tr><td style="padding:6px 4px;">IP</td><td style="padding:6px 4px;" align="right"><strong>${ip || 'Unknown'}</strong></td></tr>
-                        <tr><td style="padding:6px 4px;">Location</td><td style="padding:6px 4px;" align="right"><strong>${location || 'Unknown'}</strong></td></tr>
-                        <tr><td style="padding:6px 4px;">Device</td><td style="padding:6px 4px;" align="right"><strong>${(userAgent || 'Unknown').replace(/</g,'&lt;')}</strong></td></tr>
+                      <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; max-width:540px; background:#1A1538; border:1px solid #3C3781; border-radius:14px; padding:14px 16px; color:#E9E7FF; font-family:Segoe UI,Roboto,Arial,sans-serif; font-size:14px; box-shadow:0 10px 28px rgba(108,92,231,.18);">
+                        <tr>
+                          <td style="padding:8px 6px; color:#AFAAD8;">Time</td>
+                          <td style="padding:8px 6px;" align="right"><strong>${whenISO}</strong></td>
+                        </tr>
+                        <tr>
+                          <td style="padding:8px 6px; color:#AFAAD8;">IP</td>
+                          <td style="padding:8px 6px;" align="right"><strong>${ip || 'Unknown'}</strong></td>
+                        </tr>
+                        <tr>
+                          <td style="padding:8px 6px; color:#AFAAD8;">Location</td>
+                          <td style="padding:8px 6px;" align="right"><strong>${location || 'Unknown'}</strong></td>
+                        </tr>
+                        <tr>
+                          <td style="padding:8px 6px; color:#AFAAD8;">Device</td>
+                          <td style="padding:8px 6px; font-family:Consolas, SFMono-Regular, Menlo, Monaco, monospace;" align="right"><strong>${(userAgent || 'Unknown').replace(/</g,'&lt;')}</strong></td>
+                        </tr>
                       </table>
+                      ${manageUrl ? `
+                      <table align="center" role="presentation" cellpadding="0" cellspacing="0" style="margin:18px auto 0;">
+                        <tr>
+                          <td align="center" bgcolor="#6C5CE7" style="border-radius:12px;">
+                            <a href="${manageUrl}" style="display:inline-block; padding:12px 18px; color:#FFFFFF; font-weight:700; font-family:Segoe UI,Roboto,Arial,sans-serif; text-decoration:none;">Review account activity</a>
+                          </td>
+                        </tr>
+                      </table>` : ''}
                       <p style="margin:16px 0 0; color:#D7D4F3; font-size:14px;">If this was you, no action is needed. If you don’t recognize this activity, please reset your password immediately or contact <a href="mailto:${supportEmail}" style="color:#A89BFF; text-decoration:underline;">${supportEmail}</a>.</p>
                     </td>
                   </tr>
@@ -260,7 +284,7 @@ export function buildSecurityAlertEmail({
                   <tr>
                     <td style="padding:18px 28px 26px; border-top:1px solid rgba(255,255,255,.06); font-family:Segoe UI,Roboto,Arial,sans-serif; color:#A8A5C9; font-size:12px;">
                       <div style="margin:0 0 4px;">&copy; ${new Date().getFullYear()} ${appName}. All rights reserved.</div>
-                      <div style="color:#8F8BB5;">Security notification</div>
+                      <div style="color:#8F8BB5;">Security notification • Need help? <a href="mailto:${supportEmail}" style="color:#A89BFF; text-decoration:underline;">${supportEmail}</a></div>
                     </td>
                   </tr>
                 </table>
@@ -275,7 +299,7 @@ export function buildSecurityAlertEmail({
   return { subject, text, html };
 }
 
-export function buildWelcomeEmail({ name = 'there', appName = 'Clyra AI', ctaUrl = '', supportEmail = 'support@orincore.com' }) {
+export function buildWelcomeEmail({ name = 'there', appName = 'Clyra AI', ctaUrl = '', supportEmail = 'contact@orincore.com' }) {
   const subject = `Welcome to ${appName}! Your account is verified`;
   const text = `Hi ${name},\n\nYour ${appName} account is now fully verified. You can create your own AI characters and start chatting with them right away.\n\nOpen ${appName} now to create your first character!\n\nNeed help? Contact ${supportEmail}.\n\n— The ${appName} Team`;
   const ctaHtml = ctaUrl ? `

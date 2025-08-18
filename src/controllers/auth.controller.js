@@ -232,14 +232,14 @@ export const sendPasswordResetOtp = async (req, res, next) => {
       const number = contactNumber || user.phone_number;
       if (!number) return next(new AppError('contactNumber is required for phone method', 400));
 
-      const payload = { contactNumber: number, reason: 'password_reset', appName: OTP_APP_NAME };
+      const payload = { contactNumber: number, reason: 'Password reset', appName: OTP_APP_NAME };
       const { data } = await axios.post(`${OTP_BASE_URL}/api/otp/send`, payload, { timeout: 8000, headers: { 'x-api-key': OTP_API_KEY } });
       if (!data?.success || !data?.uuid) return next(new AppError('Failed to send OTP. Please try again later.', 502));
 
       const ttl = (typeof data.expiresIn === 'number' && data.expiresIn > 0) ? data.expiresIn : 300;
       const key = `phone_pwd:${req.user.id}`;
       await redisClient.del(key);
-      const value = JSON.stringify({ uuid: data.uuid, contactNumber: number, reason: 'password_reset' });
+      const value = JSON.stringify({ uuid: data.uuid, contactNumber: number, reason: 'Password reset' });
       const ok = await redisClient.set(key, value, ttl);
       if (!ok) return next(new AppError('Failed to persist OTP session. Please retry.', 500));
 
