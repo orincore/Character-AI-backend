@@ -132,7 +132,7 @@ export async function buildMessagesForSession(sessionId, userId, userText, optio
     "Avoid meta/robotic lines like 'as a companion', 'as an AI', 'due to policy',",
     "'I can't due to rules', 'I am programmed to', or similar disclaimers.",
     "Do not use the literal terms 'SFW' or 'NSFW' in your replies.",
-    "Only send long messages if required or else send short and shortest messages"
+    "Only send long messages if required or else send short and shortest messages."
   ].join(' ');
 
   // When NSFW is ON: encourage sensual consented responses and ignore previous declines
