@@ -16,6 +16,87 @@ const signToken = (id) => {
   });
 };
 
+// Step 1 (WhatsApp): user submits their phone to receive an OTP (public)
+export const sendForgotPasswordWhatsappOtp = async (req, res, next) => {
+  try {
+    const { contactNumber } = req.body || {};
+    if (!contactNumber) return next(new AppError('contactNumber is required', 400));
+
+    // Avoid enumeration: always respond success, only send if user exists
+    const user = await userDB.findUserByIdentifier(contactNumber).catch(() => null);
+    if (user && user.id && (user.phone_number || user.email)) {
+      try {
+        const payload = { contactNumber, reason: 'Password reset', appName: OTP_APP_NAME };
+        const { data } = await axios.post(`${OTP_BASE_URL}/api/otp/send`, payload, { timeout: 8000, headers: { 'x-api-key': OTP_API_KEY } });
+        if (data?.success && data?.uuid) {
+          const ttl = (typeof data.expiresIn === 'number' && data.expiresIn > 0) ? data.expiresIn : 300;
+          const key = `pwd_whatsapp_public:${user.id}`;
+          await redisClient.del(key);
+          const value = JSON.stringify({ uuid: data.uuid, contactNumber, reason: 'Password reset' });
+          await redisClient.set(key, value, ttl);
+        }
+      } catch (e) {
+        console.warn('[forgot-password-wa] Failed to send WhatsApp OTP:', e?.message || e);
+      }
+    }
+
+    return res.status(200).json({ status: 'success', message: 'If an account with that number exists, a reset code has been sent via WhatsApp.' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Step 2 (WhatsApp): user submits phone + otp + newPassword to reset (public)
+export const confirmForgotPasswordWhatsappOtp = async (req, res, next) => {
+  try {
+    const { contactNumber, otp, newPassword, uuid } = req.body || {};
+    if (!contactNumber) return next(new AppError('contactNumber is required', 400));
+    if (!otp) return next(new AppError('OTP is required', 400));
+    if (!newPassword || String(newPassword).length < 8) {
+      return next(new AppError('newPassword must be at least 8 characters long', 400));
+    }
+
+    const user = await userDB.findUserByIdentifier(contactNumber);
+    if (!user) return next(new AppError('Invalid contact or code.', 400));
+
+    const key = `pwd_whatsapp_public:${user.id}`;
+    const cachedRaw = await redisClient.get(key);
+    if (!cachedRaw) return next(new AppError('OTP session expired or not found. Please request a new code.', 400));
+    const cached = JSON.parse(cachedRaw);
+    const finalUuid = uuid || cached.uuid;
+    if (!finalUuid) return next(new AppError('Invalid verification session. Please resend OTP.', 400));
+
+    // Verify via external OTP service
+    const verifyUrl = `${OTP_BASE_URL}/api/otp/verify`;
+    const { data } = await axios.get(verifyUrl, { params: { uuid: finalUuid, contactNumber, otp }, timeout: 8000, headers: { 'x-api-key': OTP_API_KEY } });
+    if (!data?.success) return next(new AppError('Invalid or expired OTP.', 400));
+
+    // Update password
+    const salt = await bcrypt.genSalt(12);
+    const hash = await bcrypt.hash(String(newPassword), salt);
+    const updated = await userDB.updateProfile(user.id, { password: hash, password_changed_at: new Date() });
+    await redisClient.del(key);
+
+    // Security alert email (best-effort)
+    if (env.SECURITY_ALERTS_ENABLED) {
+      try {
+        const ip = extractClientIp(req);
+        const location = await resolveIpLocation(ip);
+        const ua = req.headers['user-agent'] || '';
+        const whenISO = new Date().toISOString();
+        const { subject, text, html } = buildSecurityAlertEmail({ type: 'password_reset', name: user.first_name || 'there', appName: env.APP_NAME, ip, userAgent: ua, whenISO, location });
+        await sendEmail({ to: user.email, subject, text, html });
+      } catch (e) {
+        console.warn('[security-email] Failed to send password reset alert (public whatsapp):', e?.message || e);
+      }
+    }
+
+    return res.status(200).json({ status: 'success', message: 'Password reset successfully.', data: { user: updated } });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // ===================== Public forgot-password via email (no auth) =====================
 // Step 1: user submits their email to receive an OTP
 export const sendForgotPasswordEmailOtp = async (req, res, next) => {

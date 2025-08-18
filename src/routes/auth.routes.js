@@ -15,7 +15,9 @@ import {
   sendPasswordResetOtp,
   confirmPasswordResetOtp,
   sendForgotPasswordEmailOtp,
-  confirmForgotPasswordEmailOtp
+  confirmForgotPasswordEmailOtp,
+  sendForgotPasswordWhatsappOtp,
+  confirmForgotPasswordWhatsappOtp
 } from '../controllers/auth.controller.js';
 import { uploadSingle } from '../middleware/upload.js';
 
@@ -27,6 +29,9 @@ router.post('/login', login);
 // Forgot password via email (public)
 router.post('/password/forgot/send-otp', sendForgotPasswordEmailOtp);
 router.post('/password/forgot/confirm', confirmForgotPasswordEmailOtp);
+// Forgot password via WhatsApp (public)
+router.post('/password/forgot/whatsapp/send-otp', sendForgotPasswordWhatsappOtp);
+router.post('/password/forgot/whatsapp/confirm', confirmForgotPasswordWhatsappOtp);
 
 // Protected routes - all routes below this middleware require authentication
 router.use(protect);
