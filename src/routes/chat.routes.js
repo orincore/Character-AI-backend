@@ -17,6 +17,10 @@ router.route('/sessions')
   .get(chatController.getUserSessions)
   .delete(chatController.deleteAllUserSessions);
 
+// Create a session with a PUBLIC character (no owner mirroring)
+router.route('/public/sessions')
+  .post(chatController.createPublicCharacterSession);
+
 router.route('/sessions/:sessionId')
   .get(chatController.getSession)
   .patch(chatController.updateSession)

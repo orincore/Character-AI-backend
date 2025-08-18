@@ -43,37 +43,52 @@ export const createSession = async (req, res, next) => {
       throw new AppError('Access denied for this character', 403);
     }
 
-    // Create session for requesting user
+    // Create session for requesting user only (no mirroring)
     const session = await chatService.createSession(userId, characterId, title);
-
-    // Also mirror a session for the character owner so it shows in their chat list
-    // Only if requester isn't the owner
-    if (!isOwner) {
-      try {
-        const ownerTitle = title || `Conversation with ${userId.slice(0, 8)}`;
-        const ownerSession = await chatService.createSession(character.creator_id, characterId, ownerTitle);
-        // Store reciprocal mirror link system messages in both sessions
-        await supabase
-          .from('chat_messages')
-          .insert([
-            { session_id: session.id, role: 'system', content: `MIRROR_LINK:${ownerSession.id}` },
-            { session_id: ownerSession.id, role: 'system', content: `MIRROR_LINK:${session.id}` }
-          ]);
-      } catch (e) {
-        // Do not block main flow if owner mirror fails
-        console.warn('Failed to create mirrored owner session', {
-          characterId,
-          ownerId: character.creator_id,
-          error: e?.message || e
-        });
-      }
-    }
     
     res.status(201).json({
       status: 'success',
       data: {
         session
       }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Create a new chat session with a PUBLIC character only
+ * @route   POST /api/v1/chat/public/sessions
+ * @access  Private
+ */
+export const createPublicCharacterSession = async (req, res, next) => {
+  try {
+    const { characterId, title } = req.body;
+    const userId = req.user.id;
+
+    if (!characterId) {
+      throw new AppError('Character ID is required', 400);
+    }
+
+    // Ensure character exists and is public
+    const { data: character, error: charErr } = await supabase
+      .from('characters')
+      .select('id, visibility')
+      .eq('id', characterId)
+      .single();
+    if (charErr || !character) {
+      throw new AppError('Character not found', 404);
+    }
+    if (character.visibility !== 'public') {
+      throw new AppError('Only public characters are allowed for this endpoint', 403);
+    }
+
+    const session = await chatService.createSession(userId, characterId, title);
+
+    res.status(201).json({
+      status: 'success',
+      data: { session }
     });
   } catch (error) {
     next(error);
