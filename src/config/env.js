@@ -13,6 +13,7 @@ const env = {
   PORT: process.env.PORT || '5000',
   NODE_ENV: process.env.NODE_ENV || 'development',
   CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
+  APP_URL: process.env.APP_URL, // optional, for building absolute links in emails
   
   // JWT
   JWT_SECRET: process.env.JWT_SECRET,

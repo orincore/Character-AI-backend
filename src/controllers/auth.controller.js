@@ -7,7 +7,7 @@ import AppError from '../utils/appError.js';
 import env from '../config/env.js';
 import { uploadToS3, deleteFromS3, getKeyFromUrl } from '../config/s3.js';
 import path from 'path';
-import { sendEmail, buildOtpEmail } from '../services/email.service.js';
+import { sendEmail, buildOtpEmail, buildWelcomeEmail } from '../services/email.service.js';
 import { redisClient } from '../config/redis.js';
 
 const signToken = (id) => {
@@ -148,6 +148,16 @@ export const verifyPhoneOtp = async (req, res, next) => {
 
     // Compute overall verification according to rules
     const updated = await computeAndApplyFullVerification(user.id);
+    // If this action resulted in full verification, send welcome email
+    if (!user.is_verified && updated?.is_verified) {
+      try {
+        const ctaUrl = env.APP_URL ? `${env.APP_URL.replace(/\/$/, '')}/characters/new` : '';
+        const { subject, text, html } = buildWelcomeEmail({ name: user.first_name || 'there', appName: env.APP_NAME, ctaUrl });
+        await sendEmail({ to: user.email, subject, text, html });
+      } catch (e) {
+        console.warn('[welcome-email] Failed to send after phone verification:', e?.message || e);
+      }
+    }
 
     res.status(200).json({
       status: 'success',
@@ -222,6 +232,16 @@ export const verifyEmailOtp = async (req, res, next) => {
 
     // Compute overall verification according to rules
     const updated = await computeAndApplyFullVerification(user.id);
+    // If this action resulted in full verification, send welcome email
+    if (!user.is_verified && updated?.is_verified) {
+      try {
+        const ctaUrl = env.APP_URL ? `${env.APP_URL.replace(/\/$/, '')}/characters/new` : '';
+        const { subject, text, html } = buildWelcomeEmail({ name: user.first_name || 'there', appName: env.APP_NAME, ctaUrl });
+        await sendEmail({ to: user.email, subject, text, html });
+      } catch (e) {
+        console.warn('[welcome-email] Failed to send after email verification:', e?.message || e);
+      }
+    }
 
     res.status(200).json({ status: 'success', message: 'Email verified successfully.', data: { user: updated } });
   } catch (error) {
