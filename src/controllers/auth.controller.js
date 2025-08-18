@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import { promisify } from 'util';
 import bcrypt from 'bcryptjs';
+import axios from 'axios';
 import { userDB } from '../config/supabaseClient.js';
 import AppError from '../utils/appError.js';
 import env from '../config/env.js';
@@ -13,6 +14,149 @@ const signToken = (id) => {
   return jwt.sign({ id }, env.JWT_SECRET, {
     expiresIn: env.JWT_EXPIRES_IN,
   });
+};
+
+// ============ Phone (WhatsApp) OTP via external OTP service ============
+const OTP_BASE_URL = process.env.OTP_BASE_URL || 'https://otp.orincore.com';
+const OTP_APP_NAME = env.APP_NAME || 'Clyra AI';
+const OTP_API_KEY = process.env.OTP_API_KEY || '689914b5f3f23ea10283ab79';
+
+async function isWhatsappGatewayReady() {
+  try {
+    const url = `${OTP_BASE_URL}/api/whatsapp/status`;
+    const { data } = await axios.get(url, { timeout: 5000, headers: { 'x-api-key': OTP_API_KEY } });
+    return !!(data?.success && data?.status?.isReady && data?.status?.authenticated === true);
+  } catch (e) {
+    console.warn('[otp] WhatsApp status check failed:', e?.message || e);
+    return false;
+  }
+}
+
+// Decide whether full account verification should be marked based on channel states
+async function computeAndApplyFullVerification(userId) {
+  // Load fresh
+  const user = await userDB.getUserById(userId);
+  if (!user) throw new AppError('User not found', 404);
+
+  const hasPhone = !!user.phone_number;
+  const gatewayReady = await isWhatsappGatewayReady();
+
+  // If phone is present and gateway is ready, require BOTH email and phone
+  const requirePhone = hasPhone && gatewayReady;
+  const emailOk = !!user.is_email_verified || !!user.is_verified; // backward compatibility
+  const phoneOk = !!user.is_phone_verified;
+
+  const shouldBeVerified = emailOk && (!requirePhone || phoneOk);
+
+  if (shouldBeVerified && !user.is_verified) {
+    const updated = await userDB.updateProfile(userId, { is_verified: true, verified_at: new Date() });
+    return updated;
+  }
+  // If not verified yet, return latest user
+  return user;
+}
+
+// Send phone OTP (WhatsApp). Only proceeds if gateway is ready; otherwise instructs to use email verification.
+export const sendPhoneVerification = async (req, res, next) => {
+  try {
+    const user = await userDB.getUserById(req.user.id);
+    if (!user) return next(new AppError('User not found', 404));
+
+    const ready = await isWhatsappGatewayReady();
+    if (!ready) {
+      return res.status(200).json({
+        status: 'success',
+        message: 'WhatsApp verification unavailable. Please verify via email.',
+        data: { whatsapp_ready: false }
+      });
+    }
+
+    const contactNumber = req.body?.contactNumber || user.phone_number;
+    if (!contactNumber) {
+      return next(new AppError('contactNumber is required to send OTP', 400));
+    }
+
+    const payload = {
+      contactNumber,
+      reason: 'account_verification',
+      appName: OTP_APP_NAME
+    };
+
+    const { data } = await axios.post(`${OTP_BASE_URL}/api/otp/send`, payload, { timeout: 8000, headers: { 'x-api-key': OTP_API_KEY } });
+    if (!data?.success || !data?.uuid) {
+      return next(new AppError('Failed to send OTP. Please try again later.', 502));
+    }
+
+    // Store mapping in Redis with TTL returned by API (fallback 5m)
+    const ttl = (typeof data.expiresIn === 'number' && data.expiresIn > 0) ? data.expiresIn : 300;
+    const key = `phone_verif:${req.user.id}`;
+    await redisClient.del(key);
+    const value = JSON.stringify({ uuid: data.uuid, contactNumber, reason: 'account_verification' });
+    const ok = await redisClient.set(key, value, ttl);
+    if (!ok) {
+      return next(new AppError('Failed to persist OTP session. Please retry.', 500));
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: 'OTP sent via WhatsApp',
+      data: { uuid: data.uuid, contactNumber, expiresIn: ttl }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Confirm phone OTP.
+export const verifyPhoneOtp = async (req, res, next) => {
+  try {
+    const user = await userDB.getUserById(req.user.id);
+    if (!user) return next(new AppError('User not found', 404));
+
+    const { otp, uuid, contactNumber } = req.body || {};
+    if (!otp) return next(new AppError('otp is required', 400));
+
+    // Load stored session
+    const key = `phone_verif:${req.user.id}`;
+    const cachedRaw = await redisClient.get(key);
+    if (!cachedRaw) {
+      return next(new AppError('OTP session expired or not found. Please request a new code.', 400));
+    }
+    const cached = JSON.parse(cachedRaw);
+
+    const finalUuid = uuid || cached.uuid;
+    const finalContact = contactNumber || cached.contactNumber || user.phone_number;
+    if (!finalUuid || !finalContact) {
+      return next(new AppError('Invalid verification session. Please resend OTP.', 400));
+    }
+
+    // Verify via external service (GET with params)
+    const verifyUrl = `${OTP_BASE_URL}/api/otp/verify`;
+    const { data } = await axios.get(verifyUrl, {
+      params: { uuid: finalUuid, contactNumber: finalContact, otp },
+      timeout: 8000,
+      headers: { 'x-api-key': OTP_API_KEY }
+    });
+
+    if (!data?.success) {
+      return next(new AppError('Invalid or expired OTP.', 400));
+    }
+
+    // Mark phone channel verified
+    await userDB.updateProfile(user.id, { is_phone_verified: true });
+    await redisClient.del(key);
+
+    // Compute overall verification according to rules
+    const updated = await computeAndApplyFullVerification(user.id);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Phone verified successfully',
+      data: { user: updated, verifiedFor: data.verifiedFor || 'account_verification' }
+    });
+  } catch (error) {
+    next(error);
+  }
 };
 
 // Generate a 6-digit OTP
@@ -72,8 +216,12 @@ export const verifyEmailOtp = async (req, res, next) => {
       return next(new AppError('Invalid verification code.', 400));
     }
 
-    const updated = await userDB.updateProfile(user.id, { is_verified: true });
+    // Mark channel verified
+    await userDB.updateProfile(user.id, { is_email_verified: true });
     await redisClient.del(key);
+
+    // Compute overall verification according to rules
+    const updated = await computeAndApplyFullVerification(user.id);
 
     res.status(200).json({ status: 'success', message: 'Email verified successfully.', data: { user: updated } });
   } catch (error) {

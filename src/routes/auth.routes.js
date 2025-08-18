@@ -9,7 +9,9 @@ import {
   uploadAvatar,
   deleteAvatar,
   sendEmailVerification,
-  verifyEmailOtp
+  verifyEmailOtp,
+  sendPhoneVerification,
+  verifyPhoneOtp
 } from '../controllers/auth.controller.js';
 import { uploadSingle } from '../middleware/upload.js';
 
@@ -33,5 +35,9 @@ router.delete('/me/avatar', deleteAvatar);
 router.post('/verify/email/send', sendEmailVerification);
 router.post('/verify/email/resend', sendEmailVerification);
 router.post('/verify/email/confirm', verifyEmailOtp);
+
+// Phone (WhatsApp) verification (OTP)
+router.post('/verify/phone/send', sendPhoneVerification);
+router.post('/verify/phone/confirm', verifyPhoneOtp);
 
 export default router;
