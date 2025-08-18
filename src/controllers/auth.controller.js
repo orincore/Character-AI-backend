@@ -192,6 +192,11 @@ export const login = async (req, res, next) => {
       return next(new AppError('Incorrect email/username/phone or password', 401));
     }
 
+    // 2.5) Check if account is deactivated (soft deleted)
+    if (user.hasOwnProperty('is_active') && user.is_active === false) {
+      return next(new AppError('This account is closed. Please contact support to reopen.', 403));
+    }
+
     // 3) Check if password is correct
     const isPasswordCorrect = await bcrypt.compare(password, user.password);
     if (!isPasswordCorrect) {
@@ -272,17 +277,19 @@ export const updateUser = async (req, res, next) => {
 // Delete user account
 export const deleteUser = async (req, res, next) => {
   try {
-    await userDB.deleteUser(req.user.id);
-    
+    // Soft delete: deactivate the user instead of deleting their data
+    const updated = await userDB.updateProfile(req.user.id, { is_active: false });
+
     // Clear the JWT cookie
     res.cookie('jwt', 'loggedout', {
       expires: new Date(Date.now() + 10 * 1000),
       httpOnly: true
     });
 
-    res.status(204).json({
+    res.status(200).json({
       status: 'success',
-      data: null
+      message: 'Account has been closed. You can contact support to reopen it.',
+      data: { user: updated }
     });
   } catch (error) {
     next(error);
@@ -315,6 +322,11 @@ export const protect = async (req, res, next) => {
     const currentUser = await userDB.getUserById(decoded.id);
     if (!currentUser) {
       return next(new AppError('The user belonging to this token no longer exists.', 401));
+    }
+
+    // 3.5) Block access if the account is deactivated (soft deleted)
+    if (currentUser.hasOwnProperty('is_active') && currentUser.is_active === false) {
+      return next(new AppError('This account is closed. Please contact support to reopen.', 403));
     }
 
     // 4) Check if user changed password after the token was issued
