@@ -426,7 +426,7 @@ export const getCharacter = async (req, res, next) => {
     res.status(200).json({
       status: 'success',
       data: {
-        character: formatCharacterResponse(character, req.user.id)
+        character: formatCharacterResponse(character, userId)
       }
     });
   } catch (error) {
