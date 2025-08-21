@@ -6,6 +6,8 @@ import { createClient } from 'redis';
 import { rateLimit } from 'express-rate-limit';
 import RedisStore from 'rate-limit-redis';
 import os from 'os';
+import { exec as execCb } from 'child_process';
+import { promisify } from 'util';
 
 // Routes
 import authRoutes from './routes/auth.routes.js';
@@ -149,8 +151,43 @@ const startServer = () => {
 // Start the server
 const server = startServer();
 
+// Helper: get top processes by CPU and Memory using `ps` (works on Linux/macOS)
+const execAsync = promisify(execCb);
+async function getTopProcesses(limit = 5) {
+  try {
+    // pid ppid comm %cpu %mem rss(KB)
+    const { stdout } = await execAsync('ps -Ao pid,ppid,comm,%cpu,%mem,rss');
+    const lines = stdout.trim().split('\n');
+    const header = lines.shift();
+    const list = lines
+      .map((l) => l.trim().split(/\s+/))
+      .filter((cols) => cols.length >= 6)
+      .map((cols) => {
+        const pid = parseInt(cols[0], 10);
+        const ppid = parseInt(cols[1], 10);
+        const command = cols[2];
+        const cpuPercent = parseFloat(cols[3]);
+        const memPercent = parseFloat(cols[4]);
+        const rssKB = parseInt(cols[5], 10);
+        return {
+          pid,
+          ppid,
+          command,
+          cpuPercent: isNaN(cpuPercent) ? 0 : cpuPercent,
+          memPercent: isNaN(memPercent) ? 0 : memPercent,
+          rssMB: Number(((isNaN(rssKB) ? 0 : rssKB) / 1024).toFixed(2)),
+        };
+      });
+    const byCpu = [...list].sort((a, b) => b.cpuPercent - a.cpuPercent).slice(0, limit);
+    const byMem = [...list].sort((a, b) => b.memPercent - a.memPercent).slice(0, limit);
+    return { byCpu, byMem };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
 // Health check endpoint
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
   // System and process metrics
   const mem = process.memoryUsage();
   const cpu = process.cpuUsage();
@@ -161,6 +198,7 @@ app.get('/health', (req, res) => {
   const cores = os.cpus()?.length || 1;
   const load = os.loadavg();
   const loadPct1m = Number(((load[0] / cores) * 100).toFixed(2));
+  const top = await getTopProcesses(5);
 
   res.status(200).json({
     status: 'ok',
@@ -204,6 +242,7 @@ app.get('/health', (req, res) => {
         system: cpu.system,
       },
     },
+    topProcesses: top,
   });
 });
 
