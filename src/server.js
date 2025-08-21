@@ -5,6 +5,7 @@ import cookieParser from 'cookie-parser';
 import { createClient } from 'redis';
 import { rateLimit } from 'express-rate-limit';
 import RedisStore from 'rate-limit-redis';
+import os from 'os';
 
 // Routes
 import authRoutes from './routes/auth.routes.js';
@@ -150,10 +151,59 @@ const server = startServer();
 
 // Health check endpoint
 app.get('/health', (req, res) => {
+  // System and process metrics
+  const mem = process.memoryUsage();
+  const cpu = process.cpuUsage();
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
+  const usedMem = totalMem - freeMem;
+  const memPct = totalMem > 0 ? Number(((usedMem / totalMem) * 100).toFixed(2)) : null;
+  const cores = os.cpus()?.length || 1;
+  const load = os.loadavg();
+  const loadPct1m = Number(((load[0] / cores) * 100).toFixed(2));
+
   res.status(200).json({
     status: 'ok',
-    redis: redisClient.isConnected ? 'connected' : 'disconnected',
     timestamp: new Date().toISOString(),
+    app: {
+      env: env.NODE_ENV,
+      version: process.version,
+      pid: process.pid,
+      uptimeSec: Number(process.uptime().toFixed(2)),
+      redis: redisClient.isConnected ? 'connected' : 'disconnected',
+    },
+    system: {
+      platform: process.platform,
+      arch: process.arch,
+      hostname: os.hostname(),
+      uptimeSec: os.uptime(),
+      cores,
+      loadAvg: {
+        '1m': Number(load[0].toFixed(2)),
+        '5m': Number(load[1].toFixed(2)),
+        '15m': Number(load[2].toFixed(2)),
+        cpuPercent1mApprox: loadPct1m,
+      },
+      memory: {
+        totalBytes: totalMem,
+        freeBytes: freeMem,
+        usedBytes: usedMem,
+        usedPercent: memPct,
+      },
+    },
+    process: {
+      memoryMB: {
+        rss: Number((mem.rss / 1024 / 1024).toFixed(2)),
+        heapTotal: Number((mem.heapTotal / 1024 / 1024).toFixed(2)),
+        heapUsed: Number((mem.heapUsed / 1024 / 1024).toFixed(2)),
+        external: Number((mem.external / 1024 / 1024).toFixed(2)),
+        arrayBuffers: Number((mem.arrayBuffers / 1024 / 1024).toFixed(2)),
+      },
+      cpuMicros: {
+        user: cpu.user,
+        system: cpu.system,
+      },
+    },
   });
 });
 
