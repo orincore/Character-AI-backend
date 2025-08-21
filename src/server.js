@@ -186,6 +186,9 @@ async function getTopProcesses(limit = 5) {
   }
 }
 
+// Small helper to sleep for ms (top-level)
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 // Health check endpoint
 app.get('/health', async (req, res) => {
   // System and process metrics
@@ -200,9 +203,47 @@ app.get('/health', async (req, res) => {
   const loadPct1m = Number(((load[0] / cores) * 100).toFixed(2));
   const top = await getTopProcesses(5);
 
+  // Sample process CPU usage over a short window for a more intuitive percent
+  // Also sample system CPU percent over the same window
+  const cpuTimesStart = os.cpus().reduce((acc, c) => {
+    const t = c.times; return {
+      idle: acc.idle + t.idle,
+      total: acc.total + t.user + t.nice + t.sys + t.idle + t.irq,
+    };
+  }, { idle: 0, total: 0 });
+  const startCpu = process.cpuUsage();
+  const startHr = process.hrtime.bigint();
+  await sleep(250);
+  const deltaCpu = process.cpuUsage(startCpu);
+  const endHr = process.hrtime.bigint();
+  const elapsedMicros = Number(endHr - startHr) / 1000; // ns -> µs
+  const procCpuPercent = elapsedMicros > 0
+    ? Number((((deltaCpu.user + deltaCpu.system) / (elapsedMicros * cores)) * 100).toFixed(2))
+    : null;
+  const cpuTimesEnd = os.cpus().reduce((acc, c) => {
+    const t = c.times; return {
+      idle: acc.idle + t.idle,
+      total: acc.total + t.user + t.nice + t.sys + t.idle + t.irq,
+    };
+  }, { idle: 0, total: 0 });
+  const totalDelta = cpuTimesEnd.total - cpuTimesStart.total;
+  const idleDelta = cpuTimesEnd.idle - cpuTimesStart.idle;
+  const systemCpuPercent = totalDelta > 0
+    ? Number((((totalDelta - idleDelta) / totalDelta) * 100).toFixed(2))
+    : null;
+  const procMemPercent = totalMem > 0 ? Number(((mem.rss / totalMem) * 100).toFixed(2)) : null;
+
   res.status(200).json({
     status: 'ok',
     timestamp: new Date().toISOString(),
+    summary: {
+      cpuPercent: systemCpuPercent,     // system CPU% over ~250ms
+      memoryPercent: memPct,            // system memory usage percent
+      systemCpuPercent,
+      processCpuPercent: procCpuPercent,
+      systemMemPercent: memPct,
+      processMemPercent: procMemPercent,
+    },
     app: {
       env: env.NODE_ENV,
       version: process.version,
@@ -241,6 +282,7 @@ app.get('/health', async (req, res) => {
         user: cpu.user,
         system: cpu.system,
       },
+      cpuPercentSampled: procCpuPercent,
     },
     topProcesses: top,
   });
