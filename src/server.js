@@ -39,7 +39,9 @@ const devAllowedOrigins = [
   'exp://',
   'http://localhost:3000',
   'http://127.0.0.1:5173',
-  'http://localhost:5173'
+  'http://localhost:5173',
+  'https://clyra.orincore.com',
+  'https://api.clyra.orincore.com'
 ];
 
 const configuredOrigins = env.CORS_ORIGIN
@@ -64,7 +66,15 @@ const corsOptions = {
       },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Device-ID'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Device-ID',
+    'Cache-Control',
+    'Pragma',
+    'If-None-Match',
+    'If-Modified-Since'
+  ],
   exposedHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset', 'Retry-After']
 };
 
