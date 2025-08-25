@@ -38,6 +38,8 @@ const devAllowedOrigins = [
   'http://127.0.0.1:8081',
   'exp://',
   'http://localhost:3000',
+  'http://127.0.0.1:5173',
+  'http://localhost:5173'
 ];
 
 const configuredOrigins = env.CORS_ORIGIN
