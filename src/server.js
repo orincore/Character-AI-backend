@@ -13,6 +13,9 @@ import { promisify } from 'util';
 import authRoutes from './routes/auth.routes.js';
 import characterRoutes from './routes/character.routes.js';
 import chatRoutes from './routes/chat.routes.js';
+import notificationsRoutes from './routes/notifications.routes.js';
+import ttsRoutes from './routes/tts.routes.js';
+import { runNudgeTick } from './jobs/nudge.service.js';
 
 // Middleware
 import errorHandler, { handleRateLimit } from './middleware/errorHandler.js';
@@ -162,6 +165,27 @@ const startServer = () => {
 
 // Start the server
 const server = startServer();
+
+// Background: random character pings (nudges)
+if (env.NUDGE_ENABLED) {
+  const tickSeconds = Math.max(60, parseInt(env.NUDGE_TICK_SECONDS || '300', 10));
+  const jitterMs = Math.floor(Math.random() * 5000);
+  const runTick = async () => {
+    try {
+      const res = await runNudgeTick();
+      if (res?.processed) {
+        console.log(`[nudges] processed=${res.processed}`);
+      }
+    } catch (e) {
+      console.warn('[nudges] tick error:', e?.message || e);
+    }
+  };
+  setTimeout(() => {
+    runTick();
+    setInterval(runTick, tickSeconds * 1000);
+  }, jitterMs);
+  console.log(`[nudges] enabled; tick=${tickSeconds}s (jitter=${jitterMs}ms)`);
+}
 
 // Helper: get top processes by CPU and Memory using `ps` (works on Linux/macOS)
 const execAsync = promisify(execCb);
@@ -321,6 +345,8 @@ app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/characters', characterRoutes);
 app.use('/api/v1/chat', chatRoutes);
 app.use('/api/v1/test', testRoutes);
+app.use('/api/v1/notifications', notificationsRoutes);
+app.use('/api/v1/tts', ttsRoutes);
 
 // 404 handler
 app.all('*', (req, res, next) => {

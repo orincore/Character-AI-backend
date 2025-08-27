@@ -15,6 +15,14 @@ const env = {
   CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
   APP_URL: process.env.APP_URL, // optional, for building absolute links in emails
   SECURITY_ALERTS_ENABLED: String(process.env.SECURITY_ALERTS_ENABLED || 'true').toLowerCase() === 'true',
+  // Nudges (random character pings)
+  NUDGE_ENABLED: String(process.env.NUDGE_ENABLED || 'false').toLowerCase() === 'true',
+  NUDGE_MIN_INACTIVE_HOURS: process.env.NUDGE_MIN_INACTIVE_HOURS || '24',
+  NUDGE_MAX_PER_DAY: process.env.NUDGE_MAX_PER_DAY || '1',
+  NUDGE_BATCH_LIMIT: process.env.NUDGE_BATCH_LIMIT || '25',
+  NUDGE_TICK_SECONDS: process.env.NUDGE_TICK_SECONDS || '300', // how often the worker ticks
+  NUDGE_EMAIL_ENABLED: String(process.env.NUDGE_EMAIL_ENABLED || 'false').toLowerCase() === 'true',
+  NUDGE_EMAIL_ONLY_IF_VERIFIED: String(process.env.NUDGE_EMAIL_ONLY_IF_VERIFIED || 'true').toLowerCase() === 'true',
   
   // JWT
   JWT_SECRET: process.env.JWT_SECRET,
@@ -31,6 +39,12 @@ const env = {
   
   // Together AI
   TOGETHER_API_KEY: process.env.TOGETHER_API_KEY,
+  
+  // Push (Firebase FCM)
+  PUSH_ENABLED: String(process.env.PUSH_ENABLED || 'false').toLowerCase() === 'true',
+  FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID,
+  FIREBASE_CLIENT_EMAIL: process.env.FIREBASE_CLIENT_EMAIL,
+  FIREBASE_PRIVATE_KEY: process.env.FIREBASE_PRIVATE_KEY,
   
   // AWS
   AWS_REGION: process.env.AWS_REGION || 'ap-south-1',

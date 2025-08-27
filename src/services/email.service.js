@@ -32,6 +32,97 @@ function getTransporter() {
   return transporter;
 }
 
+export function buildNudgeEmail({
+  name = 'there',
+  characterName = 'Your character',
+  appName = 'Clyra AI',
+  ctaUrl = '',
+  previewText = 'You have a new message waiting.'
+}) {
+  const subject = `${characterName} pinged you on ${appName}`;
+  const text = `Hi ${name},\n\n${characterName} left you a message. Open ${appName} to read it.\n\n${ctaUrl ? `Open: ${ctaUrl}` : ''}`;
+  const ctaHtml = ctaUrl ? `
+    <table align="center" role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 8px;">
+      <tr>
+        <td align="center" bgcolor="#6C5CE7" style="border-radius:12px;">
+          <a href="${ctaUrl}" style="display:inline-block; padding:12px 18px; color:#FFFFFF; font-weight:700; font-family:Segoe UI,Roboto,Arial,sans-serif; text-decoration:none;">Open Chat</a>
+        </td>
+      </tr>
+    </table>
+  ` : '';
+  const html = `
+  <!DOCTYPE html>
+  <html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="x-ua-compatible" content="ie=edge" />
+    <title>${appName} • New Ping</title>
+    <style>
+      body,table,td,a{ -ms-text-size-adjust:100%; -webkit-text-size-adjust:100%; }
+      table,td{ mso-table-lspace:0pt; mso-table-rspace:0pt; }
+      img{ -ms-interpolation-mode:bicubic; border:0; outline:none; text-decoration:none; }
+      table{ border-collapse:collapse !important; }
+      body{ margin:0 !important; padding:0 !important; width:100% !important; height:100% !important; background-color:#0E0B1F; }
+      a { color: #6C5CE7; text-decoration: none; }
+      @media screen and (max-width:600px){ .container{ width:100% !important; } .px{ padding-left:20px !important; padding-right:20px !important; } }
+    </style>
+  </head>
+  <body style="background-color:#0E0B1F;">
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">${previewText}</div>
+    <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%">
+      <tr>
+        <td align="center" style="padding:32px 12px;">
+          <table class="container" border="0" cellpadding="0" cellspacing="0" role="presentation" width="640" style="width:640px; max-width:640px;">
+            <tr>
+              <td style="background:#15122A; border-radius:16px; box-shadow:0 12px 32px rgba(24,16,80,.35);">
+                <table width="100%" role="presentation" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td style="background:linear-gradient(135deg,#6C5CE7,#4B43BD); padding:28px 28px; border-top-left-radius:16px;border-top-right-radius:16px;">
+                      <table width="100%" role="presentation">
+                        <tr>
+                          <td align="left" style="font-family:Segoe UI,Roboto,Arial,sans-serif; font-size:22px; font-weight:800; color:#FFFFFF; letter-spacing:.3px;">
+                            ${appName}
+                          </td>
+                          <td align="right" style="font-family:Segoe UI,Roboto,Arial,sans-serif; font-size:12px; color:#F3F2FF;">
+                            New Ping
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="height:1px; background:linear-gradient(90deg, rgba(108,92,231,.0), rgba(108,92,231,.45), rgba(108,92,231,.0));"></td>
+                  </tr>
+                </table>
+                <table width="100%" role="presentation" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td class="px" style="padding:28px; font-family:Segoe UI,Roboto,Arial,sans-serif;">
+                      <p style="margin:0 0 10px; color:#B8B5D8; font-size:16px;">Hi ${name},</p>
+                      <h2 style="margin:0 0 12px; color:#FFFFFF; font-size:22px; font-weight:800;">${characterName} left you a message</h2>
+                      <p style="margin:0 0 18px; color:#D7D4F3; font-size:15px; line-height:1.6;">Open your chats to see what they said. They’re waiting for you. **smiles**</p>
+                      ${ctaHtml}
+                    </td>
+                  </tr>
+                </table>
+                <table width="100%" role="presentation" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td style="padding:18px 28px 26px; border-top:1px solid rgba(255,255,255,.06); font-family:Segoe UI,Roboto,Arial,sans-serif; color:#A8A5C9; font-size:12px;">
+                      <div style="margin:0 0 4px;">&copy; ${new Date().getFullYear()} ${appName}. All rights reserved.</div>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+  </html>`;
+  return { subject, text, html };
+}
+
 export async function sendEmail({ to, subject, text, html }) {
   const tx = getTransporter();
   // Many providers (incl. Brevo) require From to be a verified/sender address
