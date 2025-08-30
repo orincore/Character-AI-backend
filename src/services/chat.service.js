@@ -18,6 +18,7 @@ function extractTopic(text) {
   } catch {
     return { focus: '', keywords: [] };
   }
+}
 
 // Ensure every reply contains 1–2 emojis and is very short (3–8 words)
 function ensureEmojiAndShort(text) {
@@ -57,7 +58,6 @@ function ensureEmojiAndShort(text) {
   } catch {
     return text;
   }
-}
 }
 
 // Basic flirtation detector to reduce topic drift in NSFW mode
