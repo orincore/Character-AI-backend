@@ -20,46 +20,6 @@ function extractTopic(text) {
   }
 }
 
-// Ensure every reply contains 1–2 emojis and is very short (3–8 words)
-function ensureEmojiAndShort(text) {
-  try {
-    if (!text || typeof text !== 'string') return text;
-    const emojiRegex = /[\p{Emoji_Presentation}\p{Emoji}\uFE0F]/u;
-    const softEmojis = ['🙂', '😊', '😉', '😌', '😄', '🥰', '😏'];
-    // Trim and collapse whitespace
-    let out = text.trim().replace(/\s+/g, ' ');
-    // Word-cap to ~8 words (keep punctuation)
-    const parts = out.split(/\s+/);
-    if (parts.length > 8) {
-      out = parts.slice(0, 8).join(' ');
-      // If we cut mid-sentence, avoid dangling commas
-      out = out.replace(/[,:;\-]+$/,'');
-    }
-    // Ensure at least one emoji
-    if (!emojiRegex.test(out)) {
-      const e = softEmojis[Math.floor(Math.random() * softEmojis.length)];
-      if (/[.!?]$/.test(out)) {
-        out = out.replace(/[.!?]$/, (p) => ` ${e}${p}`);
-      } else {
-        out = `${out} ${e}`;
-      }
-    }
-    // Cap to max 2 emojis by replacing extra with nothing
-    const allEmojis = [...out.matchAll(/[\p{Emoji_Presentation}\p{Emoji}\uFE0F]/gu)];
-    if (allEmojis.length > 2) {
-      let kept = 0;
-      out = out.replace(/[\p{Emoji_Presentation}\p{Emoji}\uFE0F]/gu, (m) => {
-        kept += 1;
-        return kept <= 2 ? m : '';
-      });
-      out = out.replace(/\s{2,}/g, ' ').trim();
-    }
-    return out;
-  } catch {
-    return text;
-  }
-}
-
 // Basic flirtation detector to reduce topic drift in NSFW mode
 function detectFlirt(text) {
   try {
@@ -289,13 +249,7 @@ export async function sendMessage(sessionId, userId, message) {
       console.log('Together AI payload:', JSON.stringify({ sessionId, messages }, null, 2));
     } catch {}
     const resp = await chatCompletion(messages);
-    const rawResponse = resp?.choices?.[0]?.message?.content?.trim() || '';
-
-    // Apply policy: shorten and ensure emojis
-    const userPlan = await getUserPlan(userId).catch(() => 'free');
-    const msgType = determineMessageType(userText);
-    let aiResponse = applyResponseLengthPolicy(rawResponse, { plan: userPlan, messageType: msgType });
-    aiResponse = ensureEmojiAndShort(aiResponse);
+    const aiResponse = resp?.choices?.[0]?.message?.content?.trim() || '';
 
     // 4) Persist both user and assistant messages to Supabase
     let savedUser = false;
