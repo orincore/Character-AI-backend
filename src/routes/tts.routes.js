@@ -6,6 +6,7 @@ import { apiRateLimiter } from '../middleware/rateLimiter.js';
 import env from '../config/env.js';
 import { redisClient } from '../config/redis.js';
 import { uploadToS3 } from '../config/s3.js';
+import { supabaseAdmin } from '../config/supabaseClient.js';
 
 const router = express.Router();
 
@@ -56,6 +57,7 @@ function buildCacheKey(payload) {
 router.post('/polly', protect, ttsLimiter, async (req, res) => {
   try {
     const { text, voiceId, engine = 'neural', languageCode, reaction, format = 'mp3' } = req.body || {};
+    const messageId = req.body?.messageId || req.body?.message_id || req.query?.messageId || null;
 
     // Basic validation
     if (!voiceId) return res.status(400).json({ error: 'voiceId is required' });
@@ -117,6 +119,49 @@ router.post('/polly', protect, ttsLimiter, async (req, res) => {
       });
 
       const response = { url: upload.url, format: outputFormat, key: upload.key || key };
+
+      // Optionally persist to the related chat message's metadata
+      if (messageId) {
+        try {
+          // Fetch message and validate ownership through session
+          const { data: msg, error: msgErr } = await supabaseAdmin
+            .from('chat_messages')
+            .select('id, session_id, metadata')
+            .eq('id', messageId)
+            .single();
+          if (!msgErr && msg) {
+            const { data: session, error: sessErr } = await supabaseAdmin
+              .from('chat_sessions')
+              .select('id, user_id')
+              .eq('id', msg.session_id)
+              .single();
+            if (!sessErr && session && session.user_id === req.user.id) {
+              const existing = msg.metadata || {};
+              const updated = {
+                ...existing,
+                audio_url: response.url,
+                audioUrl: response.url,
+                tts: {
+                  ...(existing.tts || {}),
+                  provider: 'polly',
+                  voiceId,
+                  engine: engine === 'neural' ? 'neural' : 'standard',
+                  languageCode,
+                  reaction: String(reaction || ''),
+                  format: outputFormat
+                }
+              };
+              await supabaseAdmin
+                .from('chat_messages')
+                .update({ metadata: updated })
+                .eq('id', messageId);
+            }
+          }
+        } catch (e) {
+          console.warn('[TTS Polly] Failed to persist audio_url to message metadata:', e?.message || e);
+        }
+      }
+
       await redisClient.set(cacheKey, JSON.stringify(response), 60 * 60 * 24); // 24h
       return res.status(200).json(response);
     }

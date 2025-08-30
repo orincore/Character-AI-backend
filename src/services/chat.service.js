@@ -305,16 +305,29 @@ export async function sendMessage(sessionId, userId, message) {
 function formatMessages(messages) {
   if (!Array.isArray(messages)) return [];
   
-  return messages.map(msg => ({
-    id: msg.id,
-    session_id: msg.session_id,
-    content: msg.content,
-    sender_type: msg.role === 'assistant' ? 'ai' : 'user',
-    created_at: msg.created_at ? new Date(msg.created_at).toISOString() : null,
-    order_index: typeof msg.order_index === 'number' ? msg.order_index : (msg.order_index != null ? Number(msg.order_index) : null),
-    is_ai_typing: false,
-    metadata: msg.metadata || {}
-  }));
+  return messages.map(msg => {
+    const metadata = msg.metadata || {};
+    const audio_url = metadata.audio_url
+      || metadata.audioUrl
+      || (metadata.audio && metadata.audio.url)
+      || metadata.tts_url
+      || (metadata.tts && metadata.tts.url)
+      || null;
+
+    return {
+      id: msg.id,
+      session_id: msg.session_id,
+      content: msg.content,
+      sender_type: msg.role === 'assistant' ? 'ai' : 'user',
+      created_at: msg.created_at ? new Date(msg.created_at).toISOString() : null,
+      order_index: typeof msg.order_index === 'number' ? msg.order_index : (msg.order_index != null ? Number(msg.order_index) : null),
+      is_ai_typing: false,
+      metadata,
+      audio_url,
+      // alias to support camelCase consumers
+      audioUrl: audio_url
+    };
+  });
 }
 
 /**
@@ -355,7 +368,14 @@ export async function getSessionMessages(sessionId, userId, { limit = 50, offset
 
     const messages = Array.isArray(data) ? data : [];
     const formattedMessages = formatMessages(messages);
-    return { messages: formattedMessages, total: typeof count === 'number' ? count : messages.length };
+    const total = typeof count === 'number' ? count : messages.length;
+    const pagination = {
+      limit: Math.max(1, Number(limit) || 50),
+      offset: Math.max(0, Number(offset) || 0),
+      total,
+      has_more: (Number(offset) || 0) + messages.length < total
+    };
+    return { messages: formattedMessages, total, pagination };
   } catch (err) {
     throw err;
   }
@@ -403,6 +423,13 @@ export async function listUserSessions(userId, limit = 50) {
         .order('id', { ascending: false })
         .limit(1);
       const m = Array.isArray(msgs) && msgs[0] ? msgs[0] : null;
+      const meta = m?.metadata || {};
+      const audio_url = meta.audio_url
+        || meta.audioUrl
+        || (meta.audio && meta.audio.url)
+        || meta.tts_url
+        || (meta.tts && meta.tts.url)
+        || null;
       const last_message = m ? {
         id: m.id,
         session_id: m.session_id,
@@ -412,7 +439,9 @@ export async function listUserSessions(userId, limit = 50) {
         order_index: typeof m.order_index === 'number' ? m.order_index : (m.order_index != null ? Number(m.order_index) : null),
         is_nsfw: !!m.is_nsfw,
         is_ai_typing: false,
-        metadata: m.metadata || {}
+        metadata: meta,
+        audio_url,
+        audioUrl: audio_url
       } : null;
       const last_activity_at = last_message?.created_at || (s.updated_at ? new Date(s.updated_at).toISOString() : null);
       const char = charsById[s.character_id] || null;
